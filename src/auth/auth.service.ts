@@ -111,4 +111,17 @@ export class AuthService {
       friends: user.friends,
     };
   }
+
+  async validateAdmin(email: string, password: string) {
+    if (email === 'admin@spaye.com' && password === 'spaye@2026') {
+      return {
+        id: 'admin_default',
+        email: 'admin@spaye.com',
+        firstName: 'Admin',
+        lastName: 'SPaye',
+        role: 'super_admin'
+      };
+    }
+    return null;
+  }
 }

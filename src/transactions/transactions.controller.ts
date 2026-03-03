@@ -1,41 +1,25 @@
-import { Controller, Get, Post, Body, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, Req, NotFoundException } from '@nestjs/common';
 import { TransactionsService } from './transactions.service';
-import { SendMoneyDto } from './dto/send-money.dto';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @Controller('transactions')
+@UseGuards(JwtAuthGuard)
 export class TransactionsController {
   constructor(private transactionsService: TransactionsService) {}
 
-  @Get('stats')
-  async getStats(@Req() req) {
-    const userId = req.user?.userId;
-    return this.transactionsService.getDashboardStats(userId);
+  @Get('user/stats')
+  async getUserStats(@Req() req) {
+    const userId = req.user.userId;
+    const stats = await this.transactionsService.getDashboardStats(userId);
+    if (!stats) {
+      throw new NotFoundException('Statistiques non trouvées');
+    }
+    return stats;
   }
 
-  @Post('send')
-  async sendMoney(@Req() req, @Body() sendMoneyDto: SendMoneyDto) {
-    const userId = req.user?.userId;
-    return this.transactionsService.sendMoney(userId, sendMoneyDto);
-  }
-
-  @Post('mobile-money')
-  async mobileMoneyTransfer(@Req() req, @Body() body: any) {
-    const userId = req.user?.userId;
-    return this.transactionsService.mobileMoneyTransfer(
-      userId,
-      body.operator,
-      body.phoneNumber,
-      body.amount
-    );
-  }
-
-  @Post('scan-pay')
-  async scanAndPay(@Req() req, @Body() body: any) {
-    const userId = req.user?.userId;
-    return this.transactionsService.scanAndPay(
-      userId,
-      body.receiverQrCode,
-      body.amount
-    );
+  @Get('user')
+  async getUserTransactions(@Req() req) {
+    const userId = req.user.userId;
+    return this.transactionsService.getUserTransactions(userId);
   }
 }
