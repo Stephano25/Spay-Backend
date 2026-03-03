@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, UseGuards, Req, NotFoundException } from '@nestjs/common';
+import { Controller, Get, UseGuards, Req } from '@nestjs/common';
 import { TransactionsService } from './transactions.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
@@ -9,17 +9,8 @@ export class TransactionsController {
 
   @Get('user/stats')
   async getUserStats(@Req() req) {
+    console.log('🔐 Requête reçue de l\'utilisateur:', req.user);
     const userId = req.user.userId;
-    const stats = await this.transactionsService.getDashboardStats(userId);
-    if (!stats) {
-      throw new NotFoundException('Statistiques non trouvées');
-    }
-    return stats;
-  }
-
-  @Get('user')
-  async getUserTransactions(@Req() req) {
-    const userId = req.user.userId;
-    return this.transactionsService.getUserTransactions(userId);
+    return this.transactionsService.getDashboardStats(userId);
   }
 }

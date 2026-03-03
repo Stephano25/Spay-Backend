@@ -5,7 +5,7 @@ import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { TransactionsModule } from './transactions/transactions.module';
 import { ChatModule } from './chat/chat.module';
-import { FriendsModule } from './friends/friends.module';
+import { AdminModule } from './admin/admin.module'; // AJOUTER
 
 @Module({
   imports: [
@@ -15,7 +15,7 @@ import { FriendsModule } from './friends/friends.module';
     UsersModule,
     TransactionsModule,
     ChatModule,
-    FriendsModule,
+    AdminModule, // AJOUTER
   ],
 })
 export class AppModule {}

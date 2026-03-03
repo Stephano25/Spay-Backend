@@ -57,6 +57,10 @@ export class User {
 
   @Prop({ type: Object, default: {} })
   settings: Record<string, any>;
+  
+  // Déclarer explicitement les champs de timestamps
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

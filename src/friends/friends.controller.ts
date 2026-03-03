@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Delete, Body, Param, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param, UseGuards, Req, Query } from '@nestjs/common';
 import { FriendsService } from './friends.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
@@ -20,15 +20,15 @@ export class FriendsController {
   }
 
   @Get('suggestions')
-  async getFriendSuggestions(@Req() req) {
+  async getSuggestions(@Req() req) {
     const userId = req.user.userId;
-    return this.friendsService.getFriendSuggestions(userId);
+    return this.friendsService.getSuggestions(userId);
   }
 
-  @Get('status/:friendId')
-  async getFriendStatus(@Req() req, @Param('friendId') friendId: string) {
+  @Get('search')
+  async searchUsers(@Req() req, @Query('q') query: string) {
     const userId = req.user.userId;
-    return this.friendsService.getFriendStatus(userId, friendId);
+    return this.friendsService.searchUsers(query, userId);
   }
 
   @Post('request/:friendId')

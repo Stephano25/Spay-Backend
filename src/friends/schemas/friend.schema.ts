@@ -14,14 +14,12 @@ export class Friend {
   @Prop({ enum: ['pending', 'accepted', 'blocked'], default: 'pending' })
   status: string;
 
-  @Prop()
+  @Prop({ default: Date.now })
   createdAt: Date;
 
-  @Prop()
+  @Prop({ default: Date.now })
   updatedAt: Date;
 }
 
 export const FriendSchema = SchemaFactory.createForClass(Friend);
-
-// Index composé pour garantir l'unicité de la relation
 FriendSchema.index({ userId: 1, friendId: 1 }, { unique: true });
