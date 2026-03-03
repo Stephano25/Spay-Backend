@@ -5,7 +5,7 @@ import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { TransactionsModule } from './transactions/transactions.module';
 import { ChatModule } from './chat/chat.module';
-import { MobileMoneyModule } from './mobile-money/mobile-money.module';
+import { FriendsModule } from './friends/friends.module';
 
 @Module({
   imports: [
@@ -15,7 +15,7 @@ import { MobileMoneyModule } from './mobile-money/mobile-money.module';
     UsersModule,
     TransactionsModule,
     ChatModule,
-    MobileMoneyModule,
+    FriendsModule,
   ],
 })
 export class AppModule {}

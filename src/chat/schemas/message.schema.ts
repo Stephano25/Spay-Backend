@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { Document, Types } from 'mongoose';
 
 export type MessageDocument = Message & Document;
 
@@ -15,11 +15,11 @@ export enum MessageType {
 
 @Schema({ timestamps: true })
 export class Message {
-  @Prop({ required: true, type: String, ref: 'User' })
-  senderId: string;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  senderId: Types.ObjectId;
 
-  @Prop({ required: true, type: String, ref: 'User' })
-  receiverId: string;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  receiverId: Types.ObjectId;
 
   @Prop({ required: true, enum: MessageType })
   type: MessageType;
@@ -39,6 +39,9 @@ export class Message {
   @Prop({ default: false })
   isRead: boolean;
 
+  @Prop({ default: false })
+  isDelivered: boolean;
+
   @Prop()
   emoji: string;
 
@@ -46,6 +49,7 @@ export class Message {
   moneyTransfer: {
     amount: number;
     status: string;
+    transactionId?: string;
   };
 }
 

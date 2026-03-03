@@ -36,6 +36,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return;
       }
 
+      // Utiliser validateUser au lieu de jwtService.verify directement
       const user = await this.chatService.validateUser(token);
       
       if (user && user.id) {
@@ -71,6 +72,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     
     if (!senderId) return;
 
+    // Utiliser saveMessage au lieu de sendMessage
     const message = await this.chatService.saveMessage({
       ...data,
       senderId,
@@ -82,6 +84,21 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     client.emit('messageSent', message);
+  }
+
+  @SubscribeMessage('typing')
+  async handleTyping(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { receiverId: string; isTyping: boolean },
+  ) {
+    const receiverSocketId = this.connectedUsers.get(data.receiverId);
+    
+    if (receiverSocketId && client.data?.userId) {
+      this.server.to(receiverSocketId).emit('userTyping', {
+        userId: client.data.userId,
+        isTyping: data.isTyping,
+      });
+    }
   }
 
   @SubscribeMessage('startCall')
@@ -131,17 +148,30 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
-  @SubscribeMessage('typing')
-  async handleTyping(
+  @SubscribeMessage('rejectCall')
+  async handleRejectCall(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { receiverId: string; isTyping: boolean },
+    @MessageBody() data: { callerId: string },
+  ) {
+    const callerSocketId = this.connectedUsers.get(data.callerId);
+    
+    if (callerSocketId) {
+      this.server.to(callerSocketId).emit('callRejected', {
+        message: 'Appel refusé',
+      });
+    }
+  }
+
+  @SubscribeMessage('endCall')
+  async handleEndCall(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { receiverId: string },
   ) {
     const receiverSocketId = this.connectedUsers.get(data.receiverId);
     
-    if (receiverSocketId && client.data?.userId) {
-      this.server.to(receiverSocketId).emit('userTyping', {
-        userId: client.data.userId,
-        isTyping: data.isTyping,
+    if (receiverSocketId) {
+      this.server.to(receiverSocketId).emit('callEnded', {
+        message: 'Appel terminé',
       });
     }
   }

@@ -51,6 +51,12 @@ export class User {
 
   @Prop()
   lastLogin: Date;
+
+  @Prop()
+  bio: string;
+
+  @Prop({ type: Object, default: {} })
+  settings: Record<string, any>;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
