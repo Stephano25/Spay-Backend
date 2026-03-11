@@ -256,4 +256,26 @@ export class ChatService {
       fileSize: file.size,
     };
   }
+  
+  /**
+   * Récupérer les informations d'un utilisateur
+   */
+
+  async getUserInfo(userId: string): Promise<{ firstName: string; lastName: string } | null> {
+    try {
+      const user = await this.userModel
+        .findById(new Types.ObjectId(userId))
+        .select('firstName lastName')
+        .lean()
+        .exec();
+      
+      return user ? { 
+        firstName: user.firstName, 
+        lastName: user.lastName 
+      } : null;
+    } catch (error) {
+      console.error('Erreur récupération utilisateur:', error);
+      return null;
+    }
+  }
 }

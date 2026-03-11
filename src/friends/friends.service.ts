@@ -1,20 +1,22 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Inject, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Friend, FriendDocument } from './schemas/friend.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { ConversationsService } from '../conversations/conversations.service';
+import { ChatGateway } from '../chat/chat.gateway';
 
 @Injectable()
 export class FriendsService {
   constructor(
     @InjectModel(Friend.name) private friendModel: Model<FriendDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
-    private conversationsService: ConversationsService,
+    @Inject(forwardRef(() => ConversationsService)) private conversationsService: ConversationsService,
+    @Inject(forwardRef(() => ChatGateway)) private chatGateway: ChatGateway,
   ) {}
 
   /**
-   * Récupérer la liste des amis
+   * Récupérer la liste des amis (uniquement acceptés)
    */
   async getFriends(userId: string): Promise<any[]> {
     const userObjectId = new Types.ObjectId(userId);
@@ -24,8 +26,8 @@ export class FriendsService {
         $or: [{ userId: userObjectId }, { friendId: userObjectId }],
         status: 'accepted',
       })
-      .populate('userId', 'firstName lastName email phoneNumber profilePicture')
-      .populate('friendId', 'firstName lastName email phoneNumber profilePicture')
+      .populate('userId', 'firstName lastName email phoneNumber profilePicture isOnline lastSeen')
+      .populate('friendId', 'firstName lastName email phoneNumber profilePicture isOnline lastSeen')
       .exec();
 
     return friendships.map(f => {
@@ -42,6 +44,36 @@ export class FriendsService {
     });
   }
 
+  /**
+  * Récupérer les utilisateurs bloqués
+  */
+  async getBlockedUsers(userId: string): Promise<any[]> {
+    const userObjectId = new Types.ObjectId(userId);
+  
+    const blockedRelations = await this.friendModel
+      .find({
+        $or: [{ userId: userObjectId }, { friendId: userObjectId }],
+        status: 'blocked',
+        blockedBy: userObjectId,
+      })
+      .populate('userId', 'firstName lastName email phoneNumber profilePicture')
+      .populate('friendId', 'firstName lastName email phoneNumber profilePicture')
+      .exec();
+
+    return blockedRelations.map(f => {
+      const blockedUser = f.userId._id.toString() === userId ? f.friendId : f.userId;
+      return {
+        id: f._id,
+        userId: f.userId._id,
+        friendId: f.friendId._id,
+        status: f.status,
+        blockedBy: f.blockedBy,
+        createdAt: f.createdAt,
+        friend: blockedUser,
+      };
+    });
+  }
+  
   /**
    * Récupérer les demandes d'amis reçues
    */
@@ -92,6 +124,16 @@ export class FriendsService {
     });
 
     if (existing) {
+      if (existing.status === 'blocked') {
+        throw new ForbiddenException('Impossible d\'envoyer une demande à un utilisateur bloqué');
+      }
+      if (existing.status === 'deleted') {
+        // Réactiver la relation
+        existing.status = 'pending';
+        existing.deletedBy = undefined;
+        await existing.save();
+        return { message: 'Demande d\'ami renvoyée', success: true };
+      }
       throw new BadRequestException('Une relation existe déjà avec cet utilisateur');
     }
 
@@ -102,7 +144,14 @@ export class FriendsService {
     });
 
     await friendRequest.save();
-    return { message: 'Demande d\'ami envoyée' };
+    
+    // Notifier via WebSocket
+    this.chatGateway.notifyUser(friendId, 'friendRequest', {
+      from: userId,
+      requestId: friendRequest._id,
+    });
+
+    return { message: 'Demande d\'ami envoyée', success: true };
   }
 
   /**
@@ -136,9 +185,16 @@ export class FriendsService {
       'text'
     );
 
+    // Notifier via WebSocket
+    this.chatGateway.notifyUser(request.userId.toString(), 'friendRequestAccepted', {
+      by: userId,
+      conversationId: conversation._id,
+    });
+
     return { 
       message: 'Demande d\'ami acceptée',
-      conversationId: conversation._id 
+      conversationId: conversation._id,
+      success: true,
     };
   }
 
@@ -156,7 +212,13 @@ export class FriendsService {
     }
 
     await request.deleteOne();
-    return { message: 'Demande d\'ami refusée' };
+    
+    // Notifier via WebSocket
+    this.chatGateway.notifyUser(request.userId.toString(), 'friendRequestDeclined', {
+      by: userId,
+    });
+
+    return { message: 'Demande d\'ami refusée', success: true };
   }
 
   /**
@@ -166,7 +228,7 @@ export class FriendsService {
     const userObjectId = new Types.ObjectId(userId);
     const friendObjectId = new Types.ObjectId(friendId);
 
-    const result = await this.friendModel.findOneAndDelete({
+    const friendship = await this.friendModel.findOne({
       $or: [
         { userId: userObjectId, friendId: friendObjectId },
         { userId: friendObjectId, friendId: userObjectId },
@@ -174,11 +236,126 @@ export class FriendsService {
       status: 'accepted',
     });
 
-    if (!result) {
+    if (!friendship) {
       throw new NotFoundException('Relation d\'amitié non trouvée');
     }
 
-    return { message: 'Ami supprimé' };
+    // Marquer comme supprimé par cet utilisateur
+    friendship.status = 'deleted';
+    friendship.deletedBy = userObjectId;
+    await friendship.save();
+
+    // Notifier l'autre utilisateur
+    const otherUserId = friendship.userId.toString() === userId 
+      ? friendship.friendId.toString() 
+      : friendship.userId.toString();
+    
+    this.chatGateway.notifyUser(otherUserId, 'friendRemoved', {
+      by: userId,
+    });
+
+    return { message: 'Ami supprimé', success: true };
+  }
+
+  /**
+   * Bloquer un utilisateur
+   */
+  async blockUser(userId: string, userToBlockId: string): Promise<any> {
+    if (userId === userToBlockId) {
+      throw new BadRequestException('Vous ne pouvez pas vous bloquer vous-même');
+    }
+
+    const userObjectId = new Types.ObjectId(userId);
+    const blockObjectId = new Types.ObjectId(userToBlockId);
+
+    // Vérifier si une relation existe
+    let friendship = await this.friendModel.findOne({
+      $or: [
+        { userId: userObjectId, friendId: blockObjectId },
+        { userId: blockObjectId, friendId: userObjectId },
+      ],
+    });
+
+    if (friendship) {
+      // Mettre à jour la relation existante
+      friendship.status = 'blocked';
+      friendship.blockedBy = userObjectId;
+      friendship.deletedBy = undefined;
+      await friendship.save();
+    } else {
+      // Créer une nouvelle relation bloquée
+      friendship = new this.friendModel({
+        userId: userObjectId,
+        friendId: blockObjectId,
+        status: 'blocked',
+        blockedBy: userObjectId,
+      });
+      await friendship.save();
+    }
+
+    // Notifier via WebSocket
+    this.chatGateway.notifyUser(userToBlockId, 'userBlocked', {
+      by: userId,
+    });
+
+    return { message: 'Utilisateur bloqué', success: true };
+  }
+
+  /**
+   * Débloquer un utilisateur
+   */
+  async unblockUser(userId: string, userToUnblockId: string): Promise<any> {
+    const userObjectId = new Types.ObjectId(userId);
+    const unblockObjectId = new Types.ObjectId(userToUnblockId);
+
+    const friendship = await this.friendModel.findOne({
+      $or: [
+        { userId: userObjectId, friendId: unblockObjectId, status: 'blocked', blockedBy: userObjectId },
+        { userId: unblockObjectId, friendId: userObjectId, status: 'blocked', blockedBy: userObjectId },
+      ],
+    });
+
+    if (!friendship) {
+      throw new NotFoundException('Relation bloquée non trouvée');
+    }
+
+    // Supprimer la relation
+    await friendship.deleteOne();
+
+    // Notifier via WebSocket
+    this.chatGateway.notifyUser(userToUnblockId, 'userUnblocked', {
+      by: userId,
+    });
+
+    return { message: 'Utilisateur débloqué', success: true };
+  }
+
+  /**
+   * Vérifier le statut de blocage entre deux utilisateurs
+   */
+  async checkBlockStatus(userId: string, otherUserId: string): Promise<{ isBlocked: boolean; blockedBy?: string; canMessage: boolean }> {
+    const userObjectId = new Types.ObjectId(userId);
+    const otherObjectId = new Types.ObjectId(otherUserId);
+
+    const friendship = await this.friendModel.findOne({
+      $or: [
+        { userId: userObjectId, friendId: otherObjectId },
+        { userId: otherObjectId, friendId: userObjectId },
+      ],
+    });
+
+    if (!friendship) {
+      return { isBlocked: false, canMessage: true };
+    }
+
+    const isBlocked = friendship.status === 'blocked';
+    const blockedBy = friendship.blockedBy?.toString();
+
+    return {
+      isBlocked,
+      blockedBy,
+      canMessage: !isBlocked,
+    };
   }
 
   /**
@@ -220,6 +397,8 @@ export class FriendsService {
           profilePicture: user.profilePicture,
           isFriend: friendship?.status === 'accepted',
           hasPendingRequest: friendship?.status === 'pending',
+          isBlocked: friendship?.status === 'blocked',
+          blockedBy: friendship?.blockedBy?.toString(),
         };
       })
     );
@@ -263,6 +442,7 @@ export class FriendsService {
       profilePicture: s.profilePicture,
       isFriend: false,
       hasPendingRequest: false,
+      isBlocked: false,
     }));
   }
 }

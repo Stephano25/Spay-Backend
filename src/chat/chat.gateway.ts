@@ -9,8 +9,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { ChatService } from './chat.service';
-import { UseGuards } from '@nestjs/common';
-import { WsJwtGuard } from '../auth/ws-jwt.guard';
+import { FriendsService } from '../friends/friends.service';
 
 @WebSocketGateway({
   cors: {
@@ -24,7 +23,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private connectedUsers: Map<string, string> = new Map();
 
-  constructor(private chatService: ChatService) {}
+  constructor(
+    private chatService: ChatService,
+    private friendsService: FriendsService
+  ) {}
 
   async handleConnection(client: Socket) {
     try {
@@ -43,6 +45,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.connectedUsers.set(user.id, client.id);
         client.data = { ...client.data, userId: user.id };
         client.join(`user_${user.id}`);
+        
+        // Notifier tous les utilisateurs que cet utilisateur est en ligne
         this.server.emit('userOnline', { userId: user.id, online: true });
         console.log(`User ${user.id} connected`);
       } else {
@@ -72,17 +76,30 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     
     if (!senderId) return;
 
-    // Utiliser saveMessage au lieu de sendMessage
+    // Vérifier le blocage
+    const canSend = await this.canSendMessage(senderId, data.receiverId);
+    
+    if (!canSend) {
+      client.emit('messageBlocked', { 
+        receiverId: data.receiverId, 
+        reason: 'Vous avez bloqué cet utilisateur ou vous êtes bloqué' 
+      });
+      return;
+    }
+
+    // Sauvegarder le message
     const message = await this.chatService.saveMessage({
       ...data,
       senderId,
     });
 
+    // Envoyer au destinataire s'il est en ligne
     const receiverSocketId = this.connectedUsers.get(data.receiverId);
     if (receiverSocketId) {
       this.server.to(receiverSocketId).emit('newMessage', message);
     }
 
+    // Confirmer l'envoi à l'expéditeur
     client.emit('messageSent', message);
   }
 
@@ -91,11 +108,20 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { receiverId: string; isTyping: boolean },
   ) {
+    const senderId = client.data?.userId;
+    
+    if (!senderId) return;
+
+    // Vérifier le blocage avant d'envoyer l'indicateur de frappe
+    const canSend = await this.canSendMessage(senderId, data.receiverId);
+    
+    if (!canSend) return;
+
     const receiverSocketId = this.connectedUsers.get(data.receiverId);
     
-    if (receiverSocketId && client.data?.userId) {
+    if (receiverSocketId) {
       this.server.to(receiverSocketId).emit('userTyping', {
-        userId: client.data.userId,
+        userId: senderId,
         isTyping: data.isTyping,
       });
     }
@@ -107,16 +133,31 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { receiverId: string; type: 'video' | 'audio' },
   ) {
     const callerId = client.data?.userId;
+    
+    if (!callerId) return;
+
+    // Vérifier le blocage avant de démarrer l'appel
+    const canCall = await this.canSendMessage(callerId, data.receiverId);
+    
+    if (!canCall) {
+      client.emit('callFailed', { message: 'Vous ne pouvez pas appeler cet utilisateur' });
+      return;
+    }
+
     const receiverSocketId = this.connectedUsers.get(data.receiverId);
 
     if (receiverSocketId) {
+      // Récupérer les infos de l'appelant
+      const callerInfo = await this.chatService.getUserInfo(callerId);
+      
       this.server.to(receiverSocketId).emit('incomingCall', {
         callerId,
+        callerName: callerInfo ? `${callerInfo.firstName} ${callerInfo.lastName}` : 'Utilisateur',
         type: data.type,
         signal: data,
       });
     } else {
-      client.emit('callFailed', { message: 'User is offline' });
+      client.emit('callFailed', { message: 'Utilisateur hors ligne' });
     }
   }
 
@@ -173,6 +214,29 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.server.to(receiverSocketId).emit('callEnded', {
         message: 'Appel terminé',
       });
+    }
+  }
+
+  /**
+   * Notifier un utilisateur spécifique
+   */
+  notifyUser(userId: string, event: string, data: any): void {
+    const socketId = this.connectedUsers.get(userId);
+    if (socketId) {
+      this.server.to(socketId).emit(event, data);
+    }
+  }
+  
+  /**
+   * Vérifier si un message peut être envoyé (pas de blocage)
+   */
+  async canSendMessage(senderId: string, receiverId: string): Promise<boolean> {
+    try {
+      const status = await this.friendsService.checkBlockStatus(senderId, receiverId);
+      return status.canMessage;
+    } catch (error) {
+      console.error('Erreur vérification blocage:', error);
+      return false;
     }
   }
 }

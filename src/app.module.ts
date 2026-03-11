@@ -5,7 +5,9 @@ import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { TransactionsModule } from './transactions/transactions.module';
 import { ChatModule } from './chat/chat.module';
-import { AdminModule } from './admin/admin.module'; // AJOUTER
+import { FriendsModule } from './friends/friends.module';
+import { WalletModule } from './wallet/wallet.module';
+import { ConversationsModule } from './conversations/conversations.module'; // AJOUTER L'IMPORT
 
 @Module({
   imports: [
@@ -15,7 +17,9 @@ import { AdminModule } from './admin/admin.module'; // AJOUTER
     UsersModule,
     TransactionsModule,
     ChatModule,
-    AdminModule, // AJOUTER
+    FriendsModule,
+    WalletModule,
+    ConversationsModule, // AJOUTER DANS LES IMPORTS
   ],
 })
 export class AppModule {}

@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { Document, Types } from 'mongoose';
 
 export type TransactionDocument = Transaction & Document;
 
@@ -15,21 +15,28 @@ export enum TransactionStatus {
   PENDING = 'pending',
   COMPLETED = 'completed',
   FAILED = 'failed',
+  CANCELLED = 'cancelled',
 }
 
 @Schema({ timestamps: true })
 export class Transaction {
-  @Prop({ required: true, type: String, ref: 'User' })
-  senderId: string;
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  senderId: Types.ObjectId;
 
-  @Prop({ type: String, ref: 'User' })
-  receiverId: string;
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  receiverId: Types.ObjectId;
 
   @Prop({ required: true, enum: TransactionType })
   type: TransactionType;
 
   @Prop({ required: true, min: 0 })
   amount: number;
+
+  @Prop({ default: 0 })
+  fee: number;
+
+  @Prop({ default: 0 })
+  totalAmount: number;
 
   @Prop({ enum: TransactionStatus, default: TransactionStatus.PENDING })
   status: TransactionStatus;
@@ -38,10 +45,16 @@ export class Transaction {
   description: string;
 
   @Prop()
+  reference: string;
+
+  @Prop()
   mobileMoneyOperator: string;
 
   @Prop()
   mobileMoneyNumber: string;
+
+  @Prop()
+  paymentMethod: string;
 
   @Prop({ type: Object })
   metadata: Record<string, any>;
