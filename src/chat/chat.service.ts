@@ -1,9 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Message, MessageDocument } from './schemas/message.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
-import { SendMessageDto, ConversationResponseDto, MessageResponseDto } from './dto/message.dto';
+import { SendMessageDto, MessageResponseDto } from './dto/message.dto';
 
 @Injectable()
 export class ChatService {
@@ -17,10 +17,13 @@ export class ChatService {
    */
   async validateUser(token: string): Promise<{ id: string; email: string } | null> {
     try {
-      // Cette méthode sera implémentée avec JWT
-      // Pour l'instant, on retourne un utilisateur fictif
-      return { id: '123', email: 'user@example.com' };
+      // Cette méthode sera remplacée par la vraie validation JWT
+      // Pour l'instant, on retourne un utilisateur fictif pour le test
+      const jwt = require('jsonwebtoken');
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+      return { id: decoded.sub, email: decoded.email };
     } catch (error) {
+      console.error('Erreur validation token:', error);
       return null;
     }
   }
@@ -29,13 +32,15 @@ export class ChatService {
    * Sauvegarder un message
    */
   async saveMessage(messageData: any): Promise<MessageResponseDto> {
+    console.log('Sauvegarde message:', messageData);
+    
     const senderObjectId = new Types.ObjectId(messageData.senderId);
     const receiverObjectId = new Types.ObjectId(messageData.receiverId);
 
     const message = new this.messageModel({
       senderId: senderObjectId,
       receiverId: receiverObjectId,
-      type: messageData.type,
+      type: messageData.type || 'text',
       content: messageData.content,
       fileUrl: messageData.fileUrl,
       fileName: messageData.fileName,
@@ -77,7 +82,7 @@ export class ChatService {
   /**
    * Récupérer les conversations d'un utilisateur
    */
-  async getConversations(userId: string): Promise<ConversationResponseDto[]> {
+  async getConversations(userId: string): Promise<any[]> {
     const userObjectId = new Types.ObjectId(userId);
 
     // Récupérer tous les messages où l'utilisateur est impliqué
@@ -91,36 +96,51 @@ export class ChatService {
       .lean()
       .exec();
 
-    // Grouper par conversation
-    const conversations = new Map<string, any>();
+    // Grouper par conversation (par utilisateur)
+    const conversationMap = new Map<string, any>();
+    const processedUsers = new Set<string>();
 
     for (const message of messages as any[]) {
       const senderId = message.senderId?._id?.toString() || message.senderId?.toString();
       const receiverId = message.receiverId?._id?.toString() || message.receiverId?.toString();
       
+      // Déterminer l'autre utilisateur
       const otherUserId = senderId === userId ? receiverId : senderId;
       
+      // Éviter les doublons
+      if (processedUsers.has(otherUserId)) continue;
+      
       // Récupérer les infos de l'autre utilisateur
-      const otherUser = senderId === userId 
-        ? message.receiverId 
-        : message.senderId;
+      const otherUser = senderId === userId ? message.receiverId : message.senderId;
 
-      if (!conversations.has(otherUserId) && otherUser) {
-        conversations.set(otherUserId, {
+      if (otherUser) {
+        // Compter les messages non lus
+        const unreadCount = await this.messageModel.countDocuments({
+          senderId: new Types.ObjectId(otherUserId),
+          receiverId: userObjectId,
+          isRead: false,
+        });
+
+        conversationMap.set(otherUserId, {
           userId: otherUserId,
           firstName: otherUser.firstName || 'Utilisateur',
           lastName: otherUser.lastName || '',
           profilePicture: otherUser.profilePicture,
-          lastMessage: message,
+          lastMessage: {
+            content: message.content,
+            type: message.type,
+            createdAt: message.createdAt,
+          },
           lastMessageTime: message.createdAt,
-          unreadCount: await this.countUnreadMessages(userId, otherUserId),
-          isOnline: false,
-          lastSeen: null,
+          unreadCount,
+          isOnline: false, // À implémenter avec WebSocket
         });
+        
+        processedUsers.add(otherUserId);
       }
     }
 
-    return Array.from(conversations.values());
+    return Array.from(conversationMap.values());
   }
 
   /**
@@ -175,7 +195,7 @@ export class ChatService {
     const message = new this.messageModel({
       senderId: senderObjectId,
       receiverId: receiverObjectId,
-      type: sendMessageDto.type,
+      type: sendMessageDto.type || 'text',
       content: sendMessageDto.content,
       fileUrl: sendMessageDto.fileUrl,
       fileName: sendMessageDto.fileName,
@@ -260,7 +280,6 @@ export class ChatService {
   /**
    * Récupérer les informations d'un utilisateur
    */
-
   async getUserInfo(userId: string): Promise<{ firstName: string; lastName: string } | null> {
     try {
       const user = await this.userModel

@@ -10,10 +10,11 @@ import {
 import { Server, Socket } from 'socket.io';
 import { ChatService } from './chat.service';
 import { FriendsService } from '../friends/friends.service';
+import { UseGuards } from '@nestjs/common';
 
 @WebSocketGateway({
   cors: {
-    origin: 'http://localhost:4200',
+    origin: ['http://localhost:4200', 'http://localhost:3000'],
     credentials: true,
   },
 })
@@ -34,26 +35,31 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const token = auth && auth.token ? auth.token : null;
       
       if (!token) {
+        console.log('❌ Pas de token, déconnexion');
         client.disconnect();
         return;
       }
 
-      // Utiliser validateUser au lieu de jwtService.verify directement
       const user = await this.chatService.validateUser(token);
       
       if (user && user.id) {
         this.connectedUsers.set(user.id, client.id);
-        client.data = { ...client.data, userId: user.id };
+        client.data = { userId: user.id };
         client.join(`user_${user.id}`);
         
         // Notifier tous les utilisateurs que cet utilisateur est en ligne
-        this.server.emit('userOnline', { userId: user.id, online: true });
-        console.log(`User ${user.id} connected`);
+        this.server.emit('userOnline', { userId: user.id, isOnline: true });
+        console.log(`✅ User ${user.id} connected (${user.email})`);
+        
+        // Envoyer la liste des utilisateurs en ligne au nouveau client
+        const onlineUsers = Array.from(this.connectedUsers.keys());
+        client.emit('onlineUsers', onlineUsers);
       } else {
+        console.log('❌ Utilisateur non valide, déconnexion');
         client.disconnect();
       }
     } catch (error) {
-      console.error('Connection error:', error);
+      console.error('❌ Connection error:', error);
       client.disconnect();
     }
   }
@@ -62,8 +68,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const userId = client.data?.userId;
     if (userId) {
       this.connectedUsers.delete(userId);
-      this.server.emit('userOnline', { userId, online: false });
-      console.log(`User ${userId} disconnected`);
+      this.server.emit('userOnline', { userId, isOnline: false });
+      console.log(`📴 User ${userId} disconnected`);
     }
   }
 
@@ -74,7 +80,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {
     const senderId = client.data?.userId;
     
-    if (!senderId) return;
+    if (!senderId) {
+      client.emit('error', { message: 'Non authentifié' });
+      return;
+    }
 
     // Vérifier le blocage
     const canSend = await this.canSendMessage(senderId, data.receiverId);
@@ -87,20 +96,27 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
-    // Sauvegarder le message
-    const message = await this.chatService.saveMessage({
-      ...data,
-      senderId,
-    });
+    try {
+      // Sauvegarder le message
+      const message = await this.chatService.saveMessage({
+        ...data,
+        senderId,
+      });
 
-    // Envoyer au destinataire s'il est en ligne
-    const receiverSocketId = this.connectedUsers.get(data.receiverId);
-    if (receiverSocketId) {
-      this.server.to(receiverSocketId).emit('newMessage', message);
+      // Envoyer au destinataire s'il est en ligne
+      const receiverSocketId = this.connectedUsers.get(data.receiverId);
+      if (receiverSocketId) {
+        this.server.to(receiverSocketId).emit('newMessage', message);
+      }
+
+      // Confirmer l'envoi à l'expéditeur
+      client.emit('messageSent', message);
+      
+      console.log(`📨 Message envoyé: ${senderId} -> ${data.receiverId}`);
+    } catch (error) {
+      console.error('❌ Erreur envoi message:', error);
+      client.emit('error', { message: 'Erreur lors de l\'envoi du message' });
     }
-
-    // Confirmer l'envoi à l'expéditeur
-    client.emit('messageSent', message);
   }
 
   @SubscribeMessage('typing')
@@ -127,92 +143,22 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
-  @SubscribeMessage('startCall')
-  async handleStartCall(
+  @SubscribeMessage('markAsRead')
+  async handleMarkAsRead(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { receiverId: string; type: 'video' | 'audio' },
+    @MessageBody() data: { senderId: string },
   ) {
-    const callerId = client.data?.userId;
+    const userId = client.data?.userId;
     
-    if (!callerId) return;
+    if (!userId) return;
 
-    // Vérifier le blocage avant de démarrer l'appel
-    const canCall = await this.canSendMessage(callerId, data.receiverId);
+    await this.chatService.markAsRead(userId, data.senderId);
     
-    if (!canCall) {
-      client.emit('callFailed', { message: 'Vous ne pouvez pas appeler cet utilisateur' });
-      return;
-    }
-
-    const receiverSocketId = this.connectedUsers.get(data.receiverId);
-
-    if (receiverSocketId) {
-      // Récupérer les infos de l'appelant
-      const callerInfo = await this.chatService.getUserInfo(callerId);
-      
-      this.server.to(receiverSocketId).emit('incomingCall', {
-        callerId,
-        callerName: callerInfo ? `${callerInfo.firstName} ${callerInfo.lastName}` : 'Utilisateur',
-        type: data.type,
-        signal: data,
-      });
-    } else {
-      client.emit('callFailed', { message: 'Utilisateur hors ligne' });
-    }
-  }
-
-  @SubscribeMessage('acceptCall')
-  async handleAcceptCall(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { callerId: string; signal: any },
-  ) {
-    const callerSocketId = this.connectedUsers.get(data.callerId);
-    
-    if (callerSocketId) {
-      this.server.to(callerSocketId).emit('callAccepted', {
-        signal: data.signal,
-      });
-    }
-  }
-
-  @SubscribeMessage('iceCandidate')
-  async handleIceCandidate(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { userId: string; candidate: any },
-  ) {
-    const userSocketId = this.connectedUsers.get(data.userId);
-    
-    if (userSocketId) {
-      this.server.to(userSocketId).emit('iceCandidate', {
-        candidate: data.candidate,
-      });
-    }
-  }
-
-  @SubscribeMessage('rejectCall')
-  async handleRejectCall(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { callerId: string },
-  ) {
-    const callerSocketId = this.connectedUsers.get(data.callerId);
-    
-    if (callerSocketId) {
-      this.server.to(callerSocketId).emit('callRejected', {
-        message: 'Appel refusé',
-      });
-    }
-  }
-
-  @SubscribeMessage('endCall')
-  async handleEndCall(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { receiverId: string },
-  ) {
-    const receiverSocketId = this.connectedUsers.get(data.receiverId);
-    
-    if (receiverSocketId) {
-      this.server.to(receiverSocketId).emit('callEnded', {
-        message: 'Appel terminé',
+    // Notifier l'expéditeur que ses messages ont été lus
+    const senderSocketId = this.connectedUsers.get(data.senderId);
+    if (senderSocketId) {
+      this.server.to(senderSocketId).emit('messagesRead', { 
+        by: userId,
       });
     }
   }
@@ -236,7 +182,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return status.canMessage;
     } catch (error) {
       console.error('Erreur vérification blocage:', error);
-      return false;
+      return true; // En cas d'erreur, autoriser par défaut
     }
   }
 }

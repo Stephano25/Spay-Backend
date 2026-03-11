@@ -7,8 +7,6 @@ export enum MessageType {
   TEXT = 'text',
   IMAGE = 'image',
   FILE = 'file',
-  VOICE = 'voice',
-  VIDEO = 'video',
   EMOJI = 'emoji',
   MONEY = 'money',
 }
@@ -21,8 +19,8 @@ export class Message {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   receiverId: Types.ObjectId;
 
-  @Prop({ required: true, enum: MessageType })
-  type: MessageType;
+  @Prop({ required: true, enum: MessageType, default: MessageType.TEXT })
+  type: string;
 
   @Prop()
   content: string;
@@ -36,14 +34,14 @@ export class Message {
   @Prop()
   fileSize: number;
 
+  @Prop()
+  emoji: string;
+
   @Prop({ default: false })
   isRead: boolean;
 
   @Prop({ default: false })
   isDelivered: boolean;
-
-  @Prop()
-  emoji: string;
 
   @Prop({ type: Object })
   moneyTransfer: {

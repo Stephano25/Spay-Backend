@@ -18,10 +18,10 @@ import { FriendsModule } from '../friends/friends.module';
       secret: process.env.JWT_SECRET || 'your-secret-key',
       signOptions: { expiresIn: '7d' },
     }),
-    forwardRef(() => FriendsModule), // Utiliser forwardRef
+    forwardRef(() => FriendsModule),
   ],
   controllers: [ChatController],
   providers: [ChatService, ChatGateway],
-  exports: [ChatService, ChatGateway], // Exporter ChatGateway pour qu'il soit disponible dans FriendsService
+  exports: [ChatService, ChatGateway],
 })
 export class ChatModule {}
