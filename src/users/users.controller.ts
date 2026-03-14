@@ -13,6 +13,12 @@ export class UsersController {
     return this.usersService.findById(userId);
   }
 
+  @Put('profile')
+  async updateProfile(@Req() req, @Body() updateData: any) {
+    const userId = req.user.userId;
+    return this.usersService.update(userId, updateData);
+  }
+
   @Get('settings')
   async getUserSettings(@Req() req) {
     const userId = req.user.userId;
@@ -33,29 +39,5 @@ export class UsersController {
   @Get('qr/:qrCode')
   async getUserByQRCode(@Param('qrCode') qrCode: string) {
     return this.usersService.findByQRCode(qrCode);
-  }
-
-  @Get('friends')
-  async getFriends(@Req() req) {
-    const userId = req.user.userId;
-    return this.usersService.getFriends(userId);
-  }
-
-  @Post('friends/:friendId')
-  async addFriend(@Req() req, @Param('friendId') friendId: string) {
-    const userId = req.user.userId;
-    return this.usersService.addFriend(userId, friendId);
-  }
-
-  @Delete('friends/:friendId')
-  async removeFriend(@Req() req, @Param('friendId') friendId: string) {
-    const userId = req.user.userId;
-    return this.usersService.removeFriend(userId, friendId);
-  }
-
-  @Get('status/:userId')
-  async getUserStatus(@Param('userId') userId: string) {
-    // À implémenter avec Socket.IO
-    return { isOnline: false, lastSeen: new Date() };
   }
 }

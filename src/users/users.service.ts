@@ -9,52 +9,35 @@ export class UsersService {
     @InjectModel(User.name) private userModel: Model<UserDocument>,
   ) {}
 
-  /**
-   * Récupérer tous les utilisateurs
-   */
   async findAll(): Promise<User[]> {
-    return this.userModel.find().exec();
+    return this.userModel.find().select('-password').exec();
   }
 
-  /**
-   * Récupérer un utilisateur par son ID
-   */
   async findById(id: string): Promise<User> {
-    const user = await this.userModel.findById(id).exec();
+    const user = await this.userModel.findById(id).select('-password').exec();
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
     }
     return user;
   }
 
-  /**
-   * Récupérer un utilisateur par son email
-   */
   async findByEmail(email: string): Promise<User | null> {
     return this.userModel.findOne({ email }).exec();
   }
 
-  /**
-   * Récupérer un utilisateur par son QR code
-   */
   async findByQRCode(qrCode: string): Promise<User | null> {
-    return this.userModel.findOne({ qrCode }).exec();
+    return this.userModel.findOne({ qrCode }).select('-password').exec();
   }
 
-  /**
-   * Créer un nouvel utilisateur
-   */
   async create(userData: Partial<User>): Promise<User> {
     const newUser = new this.userModel(userData);
     return newUser.save();
   }
 
-  /**
-   * Mettre à jour un utilisateur
-   */
   async update(id: string, userData: Partial<User>): Promise<User> {
     const user = await this.userModel
       .findByIdAndUpdate(id, userData, { new: true })
+      .select('-password')
       .exec();
     
     if (!user) {
@@ -63,9 +46,6 @@ export class UsersService {
     return user;
   }
 
-  /**
-   * Supprimer un utilisateur
-   */
   async delete(id: string): Promise<void> {
     const result = await this.userModel.deleteOne({ _id: id }).exec();
     if (result.deletedCount === 0) {
@@ -73,9 +53,6 @@ export class UsersService {
     }
   }
 
-  /**
-   * Rechercher des utilisateurs
-   */
   async search(query: string): Promise<User[]> {
     return this.userModel
       .find({
@@ -86,45 +63,11 @@ export class UsersService {
           { phoneNumber: { $regex: query, $options: 'i' } },
         ],
       })
+      .select('-password')
       .limit(10)
       .exec();
   }
 
-  /**
-   * Ajouter un ami
-   */
-  async addFriend(userId: string, friendId: string): Promise<User> {
-    const user = await this.userModel.findById(userId);
-    if (!user) {
-      throw new NotFoundException('Utilisateur non trouvé');
-    }
-
-    if (!user.friends.includes(friendId)) {
-      user.friends.push(friendId);
-      await user.save();
-    }
-
-    return user;
-  }
-
-  /**
-   * Supprimer un ami
-   */
-  async removeFriend(userId: string, friendId: string): Promise<User> {
-    const user = await this.userModel.findById(userId);
-    if (!user) {
-      throw new NotFoundException('Utilisateur non trouvé');
-    }
-
-    user.friends = user.friends.filter(id => id !== friendId);
-    await user.save();
-
-    return user;
-  }
-
-  /**
-   * Mettre à jour le solde
-   */
   async updateBalance(userId: string, amount: number): Promise<User> {
     const user = await this.userModel.findById(userId);
     if (!user) {
@@ -137,21 +80,6 @@ export class UsersService {
     return user;
   }
 
-  /**
-   * Récupérer les amis d'un utilisateur
-   */
-  async getFriends(userId: string): Promise<User[]> {
-    const user = await this.userModel.findById(userId).populate('friends').exec();
-    if (!user) {
-      throw new NotFoundException('Utilisateur non trouvé');
-    }
-
-    return user.friends as any;
-  }
-
-  /**
-   * Récupérer les paramètres utilisateur
-   */
   async getUserSettings(userId: string): Promise<any> {
     const user = await this.userModel.findById(userId).select('settings').exec();
     if (!user) {
@@ -187,9 +115,6 @@ export class UsersService {
     };
   }
 
-  /**
-   * Mettre à jour les paramètres utilisateur
-   */
   async updateUserSettings(userId: string, settings: any): Promise<any> {
     const user = await this.userModel.findByIdAndUpdate(
       userId,

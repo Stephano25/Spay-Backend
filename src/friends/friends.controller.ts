@@ -13,7 +13,7 @@ export class FriendsController {
     return this.friendsService.getFriends(userId);
   }
 
-  @Get('blocked') // AJOUTER CETTE ROUTE
+  @Get('blocked')
   async getBlockedUsers(@Req() req) {
     const userId = req.user.userId;
     return this.friendsService.getBlockedUsers(userId);
@@ -37,12 +37,6 @@ export class FriendsController {
     return this.friendsService.searchUsers(query, userId);
   }
 
-  @Get('block-status/:userId') // AJOUTER CETTE ROUTE SI NÉCESSAIRE
-  async checkBlockStatus(@Req() req, @Param('userId') otherUserId: string) {
-    const userId = req.user.userId;
-    return this.friendsService.checkBlockStatus(userId, otherUserId);
-  }
-
   @Post('request/:friendId')
   async sendFriendRequest(@Req() req, @Param('friendId') friendId: string) {
     const userId = req.user.userId;
@@ -61,13 +55,13 @@ export class FriendsController {
     return this.friendsService.declineFriendRequest(userId, requestId);
   }
 
-  @Post('block/:userId') // AJOUTER CETTE ROUTE
+  @Post('block/:userId')
   async blockUser(@Req() req, @Param('userId') userToBlockId: string) {
     const userId = req.user.userId;
     return this.friendsService.blockUser(userId, userToBlockId);
   }
 
-  @Post('unblock/:userId') // AJOUTER CETTE ROUTE
+  @Post('unblock/:userId')
   async unblockUser(@Req() req, @Param('userId') userToUnblockId: string) {
     const userId = req.user.userId;
     return this.friendsService.unblockUser(userId, userToUnblockId);

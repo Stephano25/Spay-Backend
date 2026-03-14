@@ -6,6 +6,7 @@ export type UserDocument = User & Document;
 export enum UserRole {
   USER = 'user',
   ADMIN = 'admin',
+  SUPER_ADMIN = 'super_admin',
 }
 
 @Schema({ timestamps: true })
@@ -58,8 +59,10 @@ export class User {
   @Prop({ type: Object, default: {} })
   settings: Record<string, any>;
   
-  // Déclarer explicitement les champs de timestamps
+  @Prop()
   createdAt?: Date;
+  
+  @Prop()
   updatedAt?: Date;
 }
 

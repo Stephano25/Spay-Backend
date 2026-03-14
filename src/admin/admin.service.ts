@@ -3,7 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { Transaction, TransactionDocument } from '../transactions/schemas/transaction.schema';
-import { DailyStat, AdminDashboardStats, TopUser } from './admin.types'; // IMPORTER LES TYPES
+import { DailyStat, AdminDashboardStats, TopUser } from './admin.types';
 
 @Injectable()
 export class AdminService {
@@ -13,10 +13,8 @@ export class AdminService {
   ) {}
 
   async getDashboardStats(): Promise<AdminDashboardStats> {
-    console.log('📊 Calcul des statistiques dashboard...');
-    
     try {
-      const [totalUsers, activeUsers, totalTransactions, totalVolumeResult, recentUsers, recentTransactions, dailyStats, topUsers] = await Promise.all([
+      const [totalUsers, activeUsers, totalTransactions, totalVolume, recentUsers, recentTransactions, dailyStats, topUsers] = await Promise.all([
         this.userModel.countDocuments().exec(),
         this.getActiveUsersCount(),
         this.transactionModel.countDocuments().exec(),
@@ -27,20 +25,16 @@ export class AdminService {
         this.getTopUsers()
       ]);
 
-      const result = {
+      return {
         totalUsers,
         activeUsers,
         totalTransactions,
-        totalVolume: totalVolumeResult,
+        totalVolume,
         recentUsers,
         recentTransactions,
         dailyStats,
         topUsers
       };
-
-      console.log('✅ Statistiques calculées:', result);
-      return result;
-
     } catch (error) {
       console.error('❌ Erreur dans getDashboardStats:', error);
       throw error;

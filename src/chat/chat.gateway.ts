@@ -8,9 +8,10 @@ import {
   MessageBody,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
+import { UseGuards } from '@nestjs/common';
 import { ChatService } from './chat.service';
 import { FriendsService } from '../friends/friends.service';
-import { UseGuards } from '@nestjs/common';
+import { WsJwtGuard } from '../auth/ws-jwt.guard';
 
 @WebSocketGateway({
   cors: {
@@ -31,31 +32,26 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   async handleConnection(client: Socket) {
     try {
-      const auth = client.handshake.auth;
-      const token = auth && auth.token ? auth.token : null;
+      const token = client.handshake.auth?.token;
       
       if (!token) {
-        console.log('❌ Pas de token, déconnexion');
         client.disconnect();
         return;
       }
 
+      // Utiliser le guard ou vérifier le token manuellement
       const user = await this.chatService.validateUser(token);
       
       if (user && user.id) {
         this.connectedUsers.set(user.id, client.id);
-        client.data = { userId: user.id };
+        client.data.userId = user.id;
         client.join(`user_${user.id}`);
         
-        // Notifier tous les utilisateurs que cet utilisateur est en ligne
         this.server.emit('userOnline', { userId: user.id, isOnline: true });
-        console.log(`✅ User ${user.id} connected (${user.email})`);
         
-        // Envoyer la liste des utilisateurs en ligne au nouveau client
         const onlineUsers = Array.from(this.connectedUsers.keys());
         client.emit('onlineUsers', onlineUsers);
       } else {
-        console.log('❌ Utilisateur non valide, déconnexion');
         client.disconnect();
       }
     } catch (error) {
@@ -69,7 +65,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (userId) {
       this.connectedUsers.delete(userId);
       this.server.emit('userOnline', { userId, isOnline: false });
-      console.log(`📴 User ${userId} disconnected`);
     }
   }
 
@@ -85,7 +80,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
-    // Vérifier le blocage
     const canSend = await this.canSendMessage(senderId, data.receiverId);
     
     if (!canSend) {
@@ -97,22 +91,18 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     try {
-      // Sauvegarder le message
       const message = await this.chatService.saveMessage({
         ...data,
         senderId,
       });
 
-      // Envoyer au destinataire s'il est en ligne
       const receiverSocketId = this.connectedUsers.get(data.receiverId);
       if (receiverSocketId) {
         this.server.to(receiverSocketId).emit('newMessage', message);
       }
 
-      // Confirmer l'envoi à l'expéditeur
       client.emit('messageSent', message);
       
-      console.log(`📨 Message envoyé: ${senderId} -> ${data.receiverId}`);
     } catch (error) {
       console.error('❌ Erreur envoi message:', error);
       client.emit('error', { message: 'Erreur lors de l\'envoi du message' });
@@ -128,7 +118,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     
     if (!senderId) return;
 
-    // Vérifier le blocage avant d'envoyer l'indicateur de frappe
     const canSend = await this.canSendMessage(senderId, data.receiverId);
     
     if (!canSend) return;
@@ -154,7 +143,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     await this.chatService.markAsRead(userId, data.senderId);
     
-    // Notifier l'expéditeur que ses messages ont été lus
     const senderSocketId = this.connectedUsers.get(data.senderId);
     if (senderSocketId) {
       this.server.to(senderSocketId).emit('messagesRead', { 
@@ -163,9 +151,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
-  /**
-   * Notifier un utilisateur spécifique
-   */
   notifyUser(userId: string, event: string, data: any): void {
     const socketId = this.connectedUsers.get(userId);
     if (socketId) {
@@ -173,16 +158,13 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
   
-  /**
-   * Vérifier si un message peut être envoyé (pas de blocage)
-   */
   async canSendMessage(senderId: string, receiverId: string): Promise<boolean> {
     try {
       const status = await this.friendsService.checkBlockStatus(senderId, receiverId);
       return status.canMessage;
     } catch (error) {
       console.error('Erreur vérification blocage:', error);
-      return true; // En cas d'erreur, autoriser par défaut
+      return true;
     }
   }
 }

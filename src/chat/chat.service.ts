@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { JwtService } from '@nestjs/jwt';
 import { Message, MessageDocument } from './schemas/message.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { SendMessageDto, MessageResponseDto } from './dto/message.dto';
@@ -10,17 +11,12 @@ export class ChatService {
   constructor(
     @InjectModel(Message.name) private messageModel: Model<MessageDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
+    private jwtService: JwtService,
   ) {}
 
-  /**
-   * Valider un utilisateur à partir du token
-   */
   async validateUser(token: string): Promise<{ id: string; email: string } | null> {
     try {
-      // Cette méthode sera remplacée par la vraie validation JWT
-      // Pour l'instant, on retourne un utilisateur fictif pour le test
-      const jwt = require('jsonwebtoken');
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+      const decoded = this.jwtService.verify(token);
       return { id: decoded.sub, email: decoded.email };
     } catch (error) {
       console.error('Erreur validation token:', error);
@@ -28,12 +24,7 @@ export class ChatService {
     }
   }
 
-  /**
-   * Sauvegarder un message
-   */
   async saveMessage(messageData: any): Promise<MessageResponseDto> {
-    console.log('Sauvegarde message:', messageData);
-    
     const senderObjectId = new Types.ObjectId(messageData.senderId);
     const receiverObjectId = new Types.ObjectId(messageData.receiverId);
 
@@ -79,13 +70,9 @@ export class ChatService {
     };
   }
 
-  /**
-   * Récupérer les conversations d'un utilisateur
-   */
   async getConversations(userId: string): Promise<any[]> {
     const userObjectId = new Types.ObjectId(userId);
 
-    // Récupérer tous les messages où l'utilisateur est impliqué
     const messages = await this.messageModel
       .find({
         $or: [{ senderId: userObjectId }, { receiverId: userObjectId }],
@@ -96,7 +83,6 @@ export class ChatService {
       .lean()
       .exec();
 
-    // Grouper par conversation (par utilisateur)
     const conversationMap = new Map<string, any>();
     const processedUsers = new Set<string>();
 
@@ -104,17 +90,13 @@ export class ChatService {
       const senderId = message.senderId?._id?.toString() || message.senderId?.toString();
       const receiverId = message.receiverId?._id?.toString() || message.receiverId?.toString();
       
-      // Déterminer l'autre utilisateur
       const otherUserId = senderId === userId ? receiverId : senderId;
       
-      // Éviter les doublons
       if (processedUsers.has(otherUserId)) continue;
       
-      // Récupérer les infos de l'autre utilisateur
       const otherUser = senderId === userId ? message.receiverId : message.senderId;
 
       if (otherUser) {
-        // Compter les messages non lus
         const unreadCount = await this.messageModel.countDocuments({
           senderId: new Types.ObjectId(otherUserId),
           receiverId: userObjectId,
@@ -133,7 +115,7 @@ export class ChatService {
           },
           lastMessageTime: message.createdAt,
           unreadCount,
-          isOnline: false, // À implémenter avec WebSocket
+          isOnline: false,
         });
         
         processedUsers.add(otherUserId);
@@ -143,9 +125,6 @@ export class ChatService {
     return Array.from(conversationMap.values());
   }
 
-  /**
-   * Récupérer les messages entre deux utilisateurs
-   */
   async getMessages(userId: string, otherUserId: string): Promise<MessageResponseDto[]> {
     const userObjectId = new Types.ObjectId(userId);
     const otherObjectId = new Types.ObjectId(otherUserId);
@@ -185,9 +164,6 @@ export class ChatService {
     }));
   }
 
-  /**
-   * Envoyer un message
-   */
   async sendMessage(senderId: string, sendMessageDto: SendMessageDto): Promise<MessageResponseDto> {
     const senderObjectId = new Types.ObjectId(senderId);
     const receiverObjectId = new Types.ObjectId(sendMessageDto.receiverId);
@@ -234,9 +210,6 @@ export class ChatService {
     };
   }
 
-  /**
-   * Marquer les messages comme lus
-   */
   async markAsRead(userId: string, senderId: string): Promise<void> {
     const userObjectId = new Types.ObjectId(userId);
     const senderObjectId = new Types.ObjectId(senderId);
@@ -251,23 +224,6 @@ export class ChatService {
     );
   }
 
-  /**
-   * Compter les messages non lus
-   */
-  async countUnreadMessages(userId: string, senderId: string): Promise<number> {
-    const userObjectId = new Types.ObjectId(userId);
-    const senderObjectId = new Types.ObjectId(senderId);
-
-    return this.messageModel.countDocuments({
-      senderId: senderObjectId,
-      receiverId: userObjectId,
-      isRead: false,
-    });
-  }
-
-  /**
-   * Uploader un fichier
-   */
   async uploadFile(file: Express.Multer.File): Promise<{ url: string; fileName: string; fileSize: number }> {
     const fileUrl = `/uploads/${file.filename}`;
     return {
@@ -275,26 +231,5 @@ export class ChatService {
       fileName: file.originalname,
       fileSize: file.size,
     };
-  }
-  
-  /**
-   * Récupérer les informations d'un utilisateur
-   */
-  async getUserInfo(userId: string): Promise<{ firstName: string; lastName: string } | null> {
-    try {
-      const user = await this.userModel
-        .findById(new Types.ObjectId(userId))
-        .select('firstName lastName')
-        .lean()
-        .exec();
-      
-      return user ? { 
-        firstName: user.firstName, 
-        lastName: user.lastName 
-      } : null;
-    } catch (error) {
-      console.error('Erreur récupération utilisateur:', error);
-      return null;
-    }
   }
 }

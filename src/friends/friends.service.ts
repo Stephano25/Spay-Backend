@@ -15,9 +15,6 @@ export class FriendsService {
     @Inject(forwardRef(() => ChatGateway)) private chatGateway: ChatGateway,
   ) {}
 
-  /**
-   * Récupérer la liste des amis (uniquement acceptés)
-   */
   async getFriends(userId: string): Promise<any[]> {
     const userObjectId = new Types.ObjectId(userId);
     
@@ -44,9 +41,6 @@ export class FriendsService {
     });
   }
 
-  /**
-  * Récupérer les utilisateurs bloqués
-  */
   async getBlockedUsers(userId: string): Promise<any[]> {
     const userObjectId = new Types.ObjectId(userId);
   
@@ -74,9 +68,6 @@ export class FriendsService {
     });
   }
   
-  /**
-   * Récupérer les demandes d'amis reçues
-   */
   async getFriendRequests(userId: string): Promise<any[]> {
     const userObjectId = new Types.ObjectId(userId);
     
@@ -98,92 +89,70 @@ export class FriendsService {
     }));
   }
 
-  /**
-  * Envoyer une demande d'ami
-  */
   async sendFriendRequest(userId: string, friendId: string): Promise<any> {
-    console.log('=== ENVOI DEMANDE D\'AMI ===');
-  console.log('userId:', userId);
-  console.log('friendId:', friendId);
-  
-  if (userId === friendId) {
-    throw new BadRequestException('Vous ne pouvez pas vous ajouter vous-même');
-  }
-
-  try {
-    const userObjectId = new Types.ObjectId(userId);
-    const friendObjectId = new Types.ObjectId(friendId);
-
-    // Vérifier si l'utilisateur existe
-    const userExists = await this.userModel.findById(userObjectId);
-    const friendExists = await this.userModel.findById(friendObjectId);
-    
-    if (!userExists) {
-      throw new NotFoundException('Utilisateur non trouvé');
-    }
-    
-    if (!friendExists) {
-      throw new NotFoundException('Ami non trouvé');
+    if (userId === friendId) {
+      throw new BadRequestException('Vous ne pouvez pas vous ajouter vous-même');
     }
 
-    console.log('✅ Utilisateurs valides');
+    try {
+      const userObjectId = new Types.ObjectId(userId);
+      const friendObjectId = new Types.ObjectId(friendId);
 
-    // Vérifier si une relation existe déjà
-    const existing = await this.friendModel.findOne({
-      $or: [
-        { userId: userObjectId, friendId: friendObjectId },
-        { userId: friendObjectId, friendId: userObjectId },
-      ],
-    });
-
-    if (existing) {
-      console.log('Relation existante trouvée:', existing.status);
+      const userExists = await this.userModel.findById(userObjectId);
+      const friendExists = await this.userModel.findById(friendObjectId);
       
-      if (existing.status === 'blocked') {
-        throw new ForbiddenException('Impossible d\'envoyer une demande à un utilisateur bloqué');
+      if (!userExists || !friendExists) {
+        throw new NotFoundException('Utilisateur non trouvé');
       }
-      if (existing.status === 'pending') {
-        throw new BadRequestException('Une demande est déjà en attente');
-      }
-      if (existing.status === 'accepted') {
-        throw new BadRequestException('Vous êtes déjà amis avec cet utilisateur');
-      }
-      if (existing.status === 'deleted') {
-        // Réactiver la relation
-        existing.status = 'pending';
-        existing.deletedBy = undefined;
-        existing.updatedAt = new Date();
-        await existing.save();
-        
-        // Notifier via WebSocket
-        if (this.chatGateway) {
-          this.chatGateway.notifyUser(friendId, 'friendRequest', {
-            from: userId,
-            requestId: existing._id,
-          });
+
+      const existing = await this.friendModel.findOne({
+        $or: [
+          { userId: userObjectId, friendId: friendObjectId },
+          { userId: friendObjectId, friendId: userObjectId },
+        ],
+      });
+
+      if (existing) {
+        if (existing.status === 'blocked') {
+          throw new ForbiddenException('Impossible d\'envoyer une demande à un utilisateur bloqué');
         }
-        
-        return { 
-          message: 'Demande d\'ami renvoyée', 
-          success: true,
-          requestId: existing._id 
-        };
+        if (existing.status === 'pending') {
+          throw new BadRequestException('Une demande est déjà en attente');
+        }
+        if (existing.status === 'accepted') {
+          throw new BadRequestException('Vous êtes déjà amis avec cet utilisateur');
+        }
+        if (existing.status === 'deleted') {
+          existing.status = 'pending';
+          existing.deletedBy = undefined;
+          existing.updatedAt = new Date();
+          await existing.save();
+          
+          if (this.chatGateway) {
+            this.chatGateway.notifyUser(friendId, 'friendRequest', {
+              from: userId,
+              requestId: existing._id,
+            });
+          }
+          
+          return { 
+            message: 'Demande d\'ami renvoyée', 
+            success: true,
+            requestId: existing._id 
+          };
+        }
       }
-    }
 
-    // Créer la demande
-    const friendRequest = new this.friendModel({
-      userId: userObjectId,
-      friendId: friendObjectId,
-      status: 'pending',
-      createdAt: new Date(),
-      updatedAt: new Date()
-    });
+      const friendRequest = new this.friendModel({
+        userId: userObjectId,
+        friendId: friendObjectId,
+        status: 'pending',
+        createdAt: new Date(),
+        updatedAt: new Date()
+      });
 
-    await friendRequest.save();
-    console.log('✅ Demande créée avec ID:', friendRequest._id);
-    
-    // Notifier via WebSocket
+      await friendRequest.save();
+      
       if (this.chatGateway) {
         this.chatGateway.notifyUser(friendId, 'friendRequest', {
           from: userId,
@@ -203,115 +172,62 @@ export class FriendsService {
     }
   }
 
-  /**
-  * Accepter une demande d'ami
-  */
   async acceptFriendRequest(userId: string, requestId: string): Promise<any> {
-    console.log('\n=== ACCEPTATION DEMANDE D\'AMI ===');
-  console.log('📌 userId (connecté):', userId);
-  console.log('📌 requestId:', requestId);
-  
-  try {
-    // Vérifier que requestId est valide
-    if (!Types.ObjectId.isValid(requestId)) {
-      console.log('❌ ID de demande invalide');
-      throw new BadRequestException('ID de demande invalide');
-    }
-    
-    if (!Types.ObjectId.isValid(userId)) {
-      console.log('❌ ID utilisateur invalide');
-      throw new BadRequestException('ID utilisateur invalide');
-    }
-    
-    const requestObjectId = new Types.ObjectId(requestId);
-    const userObjectId = new Types.ObjectId(userId);
-    
-    // Chercher la demande
-    const request = await this.friendModel.findById(requestObjectId);
-    
-    if (!request) {
-      console.log('❌ Demande non trouvée');
-      throw new NotFoundException('Demande non trouvée');
-    }
-    
-    console.log('✅ Demande trouvée:', {
-      id: request._id,
-      userId: request.userId.toString(),
-      friendId: request.friendId.toString(),
-      status: request.status
-    });
-    
-    // CORRECTION: Vérifier que l'utilisateur connecté est bien le destinataire
-    console.log(`\n🔍 Vérification autorisation:`);
-    console.log(`   Destinataire attendu (friendId): ${request.friendId.toString()}`);
-    console.log(`   Utilisateur connecté (userId): ${userId}`);
-    
-    // Le problème est ici : la condition est inversée dans les logs mais pas dans le code
-    // Vérifions que friendId correspond à userId
-    if (request.friendId.toString() !== userId.toString()) {
-      console.log('❌ UTILISATEUR NON AUTORISÉ');
-      console.log(`   Cette demande a été envoyée à ${request.friendId.toString()}`);
-      console.log(`   Vous êtes connecté en tant que ${userId.toString()}`);
-      
-      // Chercher qui est le destinataire
-      const receiver = await this.userModel.findById(request.friendId);
-      console.log(`   Le destinataire est: ${receiver?.firstName} ${receiver?.lastName} (${receiver?.email})`);
-      
-      throw new ForbiddenException(`Vous n'êtes pas autorisé à accepter cette demande. Connectez-vous en tant que destinataire.`);
-    }
-    
-    console.log('✅ Autorisation vérifiée, mise à jour du statut...');
-    
-    // Vérifier que la demande est bien en statut "pending"
-    if (request.status !== 'pending') {
-      console.log(`❌ Mauvais statut: ${request.status}`);
-      throw new BadRequestException(`Cette demande n'est pas en attente (statut: ${request.status})`);
-    }
-    
-    // Mettre à jour le statut
-    request.status = 'accepted';
-    request.updatedAt = new Date();
-    await request.save();
-    console.log('✅ Demande acceptée et sauvegardée');
-    
-    // Créer une conversation entre les deux utilisateurs
-    console.log('📨 Création d\'une conversation...');
-    let conversation;
     try {
-      conversation = await this.conversationsService.createConversation([
-        request.userId.toString(),
-        request.friendId.toString(),
-      ]);
-      console.log('✅ Conversation créée:', conversation._id);
-    } catch (convError) {
-      console.error('❌ Erreur création conversation:', convError);
-      // Continuer même sans conversation
-    }
-    
-    // Envoyer un message de bienvenue
-    try {
-      if (conversation) {
-        const welcomeMessage = `👋 Vous êtes maintenant amis ! Commencez à discuter.`;
+      if (!Types.ObjectId.isValid(requestId) || !Types.ObjectId.isValid(userId)) {
+        throw new BadRequestException('ID invalide');
+      }
+      
+      const requestObjectId = new Types.ObjectId(requestId);
+      const userObjectId = new Types.ObjectId(userId);
+      
+      const request = await this.friendModel.findById(requestObjectId);
+      
+      if (!request) {
+        throw new NotFoundException('Demande non trouvée');
+      }
+      
+      if (request.friendId.toString() !== userId.toString()) {
+        throw new ForbiddenException(`Vous n'êtes pas autorisé à accepter cette demande`);
+      }
+      
+      if (request.status !== 'pending') {
+        throw new BadRequestException(`Cette demande n'est pas en attente (statut: ${request.status})`);
+      }
+      
+      request.status = 'accepted';
+      request.updatedAt = new Date();
+      await request.save();
+      
+      let conversation;
+      try {
+        conversation = await this.conversationsService.createConversation([
+          request.userId.toString(),
+          request.friendId.toString(),
+        ]);
+      } catch (convError) {
+        console.error('❌ Erreur création conversation:', convError);
+      }
+      
+      try {
+        if (conversation) {
           await this.conversationsService.sendMessage(
             conversation._id.toString(),
             'system',
-            welcomeMessage,
+            '👋 Vous êtes maintenant amis ! Commencez à discuter.',
             'text'
           );
-          console.log('✅ Message de bienvenue envoyé');
         }
       } catch (msgError) {
         console.error('❌ Erreur envoi message:', msgError);
       }
     
-      // Notifier via WebSocket
       try {
         if (this.chatGateway) {
           this.chatGateway.notifyUser(request.userId.toString(), 'friendRequestAccepted', {
             by: userId,
             conversationId: conversation?._id,
           });
-          console.log('✅ Notification envoyée');
         }
       } catch (notifyError) {
         console.error('❌ Erreur notification:', notifyError);
@@ -329,81 +245,35 @@ export class FriendsService {
     }
   }
 
-  /**
-   * Refuser une demande d'ami
-   */
   async declineFriendRequest(userId: string, requestId: string): Promise<any> {
-    console.log('\n=== REFUS DEMANDE D\'AMI ===');
-    console.log('📌 userId (connecté):', userId);
-    console.log('📌 requestId:', requestId);
-    
     try {
-      // Vérifier que requestId est valide
-      if (!Types.ObjectId.isValid(requestId)) {
-        console.log('❌ ID de demande invalide');
-        throw new BadRequestException('ID de demande invalide');
-      }
-      
-      if (!Types.ObjectId.isValid(userId)) {
-        console.log('❌ ID utilisateur invalide');
-        throw new BadRequestException('ID utilisateur invalide');
+      if (!Types.ObjectId.isValid(requestId) || !Types.ObjectId.isValid(userId)) {
+        throw new BadRequestException('ID invalide');
       }
       
       const requestObjectId = new Types.ObjectId(requestId);
-      const userObjectId = new Types.ObjectId(userId);
       
-      // Chercher la demande
       const request = await this.friendModel.findById(requestObjectId);
       
       if (!request) {
-        console.log('❌ Demande non trouvée');
         throw new NotFoundException('Demande non trouvée');
       }
       
-      console.log('✅ Demande trouvée:', {
-        id: request._id,
-        userId: request.userId.toString(),
-        friendId: request.friendId.toString(),
-        status: request.status
-      });
-      
-      // Vérifier que l'utilisateur connecté est bien le destinataire
-      console.log(`\n🔍 Vérification autorisation:`);
-      console.log(`   Destinataire attendu (friendId): ${request.friendId.toString()}`);
-      console.log(`   Utilisateur connecté (userId): ${userId.toString()}`);
-      
       if (request.friendId.toString() !== userId.toString()) {
-        console.log('❌ UTILISATEUR NON AUTORISÉ');
-        console.log(`   Cette demande a été envoyée à ${request.friendId.toString()}`);
-        console.log(`   Vous êtes connecté en tant que ${userId.toString()}`);
-        
-        // Chercher qui est le destinataire
-        const receiver = await this.userModel.findById(request.friendId);
-        console.log(`   Le destinataire est: ${receiver?.firstName} ${receiver?.lastName} (${receiver?.email})`);
-        
-        throw new ForbiddenException(`Vous n'êtes pas autorisé à refuser cette demande. Connectez-vous en tant que destinataire.`);
+        throw new ForbiddenException(`Vous n'êtes pas autorisé à refuser cette demande`);
       }
       
-      // Vérifier que la demande est bien en statut "pending"
       if (request.status !== 'pending') {
-        console.log(`❌ Mauvais statut: ${request.status}`);
         throw new BadRequestException(`Cette demande n'est pas en attente (statut: ${request.status})`);
       }
       
-      console.log('✅ Autorisation vérifiée, suppression de la demande...');
-      
-      // Supprimer la demande
       await request.deleteOne();
       
-      console.log('✅ Demande refusée et supprimée');
-      
-      // Notifier via WebSocket
       try {
         if (this.chatGateway) {
           this.chatGateway.notifyUser(request.userId.toString(), 'friendRequestDeclined', {
             by: userId,
           });
-          console.log('✅ Notification envoyée');
         }
       } catch (notifyError) {
         console.error('❌ Erreur notification:', notifyError);
@@ -420,9 +290,6 @@ export class FriendsService {
     }
   }
 
-  /**
-   * Supprimer un ami
-   */
   async removeFriend(userId: string, friendId: string): Promise<any> {
     const userObjectId = new Types.ObjectId(userId);
     const friendObjectId = new Types.ObjectId(friendId);
@@ -439,12 +306,10 @@ export class FriendsService {
       throw new NotFoundException('Relation d\'amitié non trouvée');
     }
 
-    // Marquer comme supprimé par cet utilisateur
     friendship.status = 'deleted';
     friendship.deletedBy = userObjectId;
     await friendship.save();
 
-    // Notifier l'autre utilisateur
     const otherUserId = friendship.userId.toString() === userId 
       ? friendship.friendId.toString() 
       : friendship.userId.toString();
@@ -456,9 +321,6 @@ export class FriendsService {
     return { message: 'Ami supprimé', success: true };
   }
 
-  /**
-   * Bloquer un utilisateur
-   */
   async blockUser(userId: string, userToBlockId: string): Promise<any> {
     if (userId === userToBlockId) {
       throw new BadRequestException('Vous ne pouvez pas vous bloquer vous-même');
@@ -467,7 +329,6 @@ export class FriendsService {
     const userObjectId = new Types.ObjectId(userId);
     const blockObjectId = new Types.ObjectId(userToBlockId);
 
-    // Vérifier si une relation existe
     let friendship = await this.friendModel.findOne({
       $or: [
         { userId: userObjectId, friendId: blockObjectId },
@@ -476,13 +337,11 @@ export class FriendsService {
     });
 
     if (friendship) {
-      // Mettre à jour la relation existante
       friendship.status = 'blocked';
       friendship.blockedBy = userObjectId;
       friendship.deletedBy = undefined;
       await friendship.save();
     } else {
-      // Créer une nouvelle relation bloquée
       friendship = new this.friendModel({
         userId: userObjectId,
         friendId: blockObjectId,
@@ -492,7 +351,6 @@ export class FriendsService {
       await friendship.save();
     }
 
-    // Notifier via WebSocket
     this.chatGateway.notifyUser(userToBlockId, 'userBlocked', {
       by: userId,
     });
@@ -500,9 +358,6 @@ export class FriendsService {
     return { message: 'Utilisateur bloqué', success: true };
   }
 
-  /**
-   * Débloquer un utilisateur
-   */
   async unblockUser(userId: string, userToUnblockId: string): Promise<any> {
     const userObjectId = new Types.ObjectId(userId);
     const unblockObjectId = new Types.ObjectId(userToUnblockId);
@@ -518,10 +373,8 @@ export class FriendsService {
       throw new NotFoundException('Relation bloquée non trouvée');
     }
 
-    // Supprimer la relation
     await friendship.deleteOne();
 
-    // Notifier via WebSocket
     this.chatGateway.notifyUser(userToUnblockId, 'userUnblocked', {
       by: userId,
     });
@@ -529,9 +382,6 @@ export class FriendsService {
     return { message: 'Utilisateur débloqué', success: true };
   }
 
-  /**
-   * Vérifier le statut de blocage entre deux utilisateurs
-   */
   async checkBlockStatus(userId: string, otherUserId: string): Promise<{ isBlocked: boolean; blockedBy?: string; canMessage: boolean }> {
     const userObjectId = new Types.ObjectId(userId);
     const otherObjectId = new Types.ObjectId(otherUserId);
@@ -557,9 +407,6 @@ export class FriendsService {
     };
   }
 
-  /**
-   * Rechercher des utilisateurs
-   */
   async searchUsers(query: string, currentUserId: string): Promise<any[]> {
     const users = await this.userModel
       .find({
@@ -605,13 +452,9 @@ export class FriendsService {
     return results;
   }
 
-  /**
-   * Récupérer les suggestions d'amis
-   */
   async getSuggestions(userId: string): Promise<any[]> {
     const userObjectId = new Types.ObjectId(userId);
 
-    // Récupérer les IDs des amis existants
     const existingFriends = await this.friendModel.find({
       $or: [{ userId: userObjectId }, { friendId: userObjectId }],
     });
@@ -621,7 +464,6 @@ export class FriendsService {
     );
     existingFriendIds.push(userId);
 
-    // Trouver des utilisateurs qui ne sont pas encore amis
     const suggestions = await this.userModel
       .find({
         _id: { $nin: existingFriendIds.map(id => new Types.ObjectId(id)) },

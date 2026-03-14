@@ -1,8 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Conversation, ConversationDocument } from './schemas/conversation.schema';
-import { Message, MessageDocument } from '../messages/schemas/message.schema';
+import { Message, MessageDocument } from '../chat/schemas/message.schema';
 
 @Injectable()
 export class ConversationsService {
@@ -11,9 +11,6 @@ export class ConversationsService {
     @InjectModel(Message.name) private messageModel: Model<MessageDocument>,
   ) {}
 
-  /**
-   * Créer une nouvelle conversation
-   */
   async createConversation(participants: string[]): Promise<ConversationDocument> {
     const participantObjectIds = participants.map(id => new Types.ObjectId(id));
     
@@ -25,9 +22,6 @@ export class ConversationsService {
     return conversation.save();
   }
 
-  /**
-   * Envoyer un message dans une conversation
-   */
   async sendMessage(
     conversationId: string,
     senderId: string,
@@ -48,7 +42,6 @@ export class ConversationsService {
 
     await message.save();
 
-    // Mettre à jour la conversation
     await this.conversationModel.findByIdAndUpdate(conversationObjectId, {
       lastMessage: message._id,
       lastMessageAt: new Date(),
@@ -57,9 +50,6 @@ export class ConversationsService {
     return message;
   }
 
-  /**
-   * Récupérer les conversations d'un utilisateur
-   */
   async getUserConversations(userId: string): Promise<any[]> {
     const userObjectId = new Types.ObjectId(userId);
     
@@ -73,9 +63,6 @@ export class ConversationsService {
     return conversations;
   }
 
-  /**
-   * Récupérer les messages d'une conversation
-   */
   async getConversationMessages(conversationId: string): Promise<MessageDocument[]> {
     const conversationObjectId = new Types.ObjectId(conversationId);
     

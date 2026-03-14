@@ -49,7 +49,7 @@ export class ChatController {
       },
     }),
     limits: {
-      fileSize: 150 * 1024 * 1024, // 150 MB
+      fileSize: 150 * 1024 * 1024,
     },
   }))
   async uploadFile(@UploadedFile() file: Express.Multer.File) {

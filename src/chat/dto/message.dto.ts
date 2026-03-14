@@ -36,15 +36,3 @@ export class MessageResponseDto {
     profilePicture?: string;
   };
 }
-
-export class ConversationResponseDto {
-  userId: string;
-  firstName: string;
-  lastName: string;
-  profilePicture?: string;
-  lastMessage: any;
-  lastMessageTime: Date;
-  unreadCount: number;
-  isOnline: boolean;
-  lastSeen?: Date;
-}

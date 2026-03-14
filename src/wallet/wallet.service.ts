@@ -87,7 +87,6 @@ export class WalletService {
       throw new BadRequestException('Solde insuffisant');
     }
 
-    // Créer la transaction - utiliser les ObjectId directement
     const transaction = await this.transactionModel.create({
       senderId: new Types.ObjectId(userId),
       receiverId: new Types.ObjectId(data.receiverId),
@@ -100,7 +99,6 @@ export class WalletService {
       paymentMethod: 'wallet'
     });
 
-    // Mettre à jour les soldes
     senderWallet.balance -= data.amount;
     receiverWallet.balance += data.amount;
     
@@ -155,10 +153,8 @@ export class WalletService {
   }
 
   async generateQRCode(userId: string, amount?: number) {
-    // Générer un QR code unique
     const qrCode = `SPAYE-${userId}-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
     
-    // Mettre à jour le wallet avec le QR code
     await this.walletModel.updateOne(
       { userId: new Types.ObjectId(userId) },
       { qrCode }
@@ -166,7 +162,7 @@ export class WalletService {
 
     return {
       qrCode,
-      expiresAt: new Date(Date.now() + 30 * 60 * 1000) // 30 minutes
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000)
     };
   }
 }

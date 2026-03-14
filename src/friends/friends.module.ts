@@ -5,7 +5,7 @@ import { FriendsService } from './friends.service';
 import { Friend, FriendSchema } from './schemas/friend.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { ConversationsModule } from '../conversations/conversations.module';
-import { ChatModule } from '../chat/chat.module'; // Importer ChatModule pour ChatGateway
+import { ChatModule } from '../chat/chat.module';
 
 @Module({
   imports: [
@@ -13,8 +13,8 @@ import { ChatModule } from '../chat/chat.module'; // Importer ChatModule pour Ch
       { name: Friend.name, schema: FriendSchema },
       { name: User.name, schema: UserSchema },
     ]),
-    forwardRef(() => ConversationsModule), // Utiliser forwardRef pour éviter les dépendances circulaires
-    forwardRef(() => ChatModule), // Utiliser forwardRef pour ChatModule
+    forwardRef(() => ConversationsModule),
+    forwardRef(() => ChatModule),
   ],
   controllers: [FriendsController],
   providers: [FriendsService],

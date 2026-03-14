@@ -3,7 +3,6 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Transaction, TransactionDocument, TransactionType, TransactionStatus } from './schemas/transaction.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
-import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { SendMoneyDto } from './dto/send-money.dto';
 
 @Injectable()
@@ -13,32 +12,21 @@ export class TransactionsService {
     @InjectModel(User.name) private userModel: Model<UserDocument>,
   ) {}
 
-  async createTransaction(userId: string, createTransactionDto: CreateTransactionDto) {
-    const transaction = new this.transactionModel({
-      ...createTransactionDto,
-      senderId: userId,
-      status: TransactionStatus.PENDING,
-    });
-
-    await transaction.save();
-    return transaction;
-  }
-
   async sendMoney(userId: string, sendMoneyDto: SendMoneyDto) {
     const { receiverId, amount, description } = sendMoneyDto;
 
     const sender = await this.userModel.findById(userId);
     if (!sender) {
-      throw new NotFoundException('Sender not found');
+      throw new NotFoundException('Expéditeur non trouvé');
     }
 
     if (sender.balance < amount) {
-      throw new BadRequestException('Insufficient balance');
+      throw new BadRequestException('Solde insuffisant');
     }
 
     const receiver = await this.userModel.findById(receiverId);
     if (!receiver) {
-      throw new NotFoundException('Receiver not found');
+      throw new NotFoundException('Destinataire non trouvé');
     }
 
     const transaction = new this.transactionModel({
@@ -65,8 +53,8 @@ export class TransactionsService {
       $or: [{ senderId: userId }, { receiverId: userId }],
     })
     .sort({ createdAt: -1 })
-    .populate('senderId', 'firstName lastName email profilePicture')
-    .populate('receiverId', 'firstName lastName email profilePicture')
+    .populate('senderId', 'firstName lastName email')
+    .populate('receiverId', 'firstName lastName email')
     .exec();
   }
 
@@ -78,7 +66,7 @@ export class TransactionsService {
 
     const user = await this.userModel.findById(userId);
     if (!user) {
-      throw new NotFoundException('User not found');
+      throw new NotFoundException('Utilisateur non trouvé');
     }
 
     const totalBalance = user.balance;
@@ -88,12 +76,11 @@ export class TransactionsService {
     
     const lastDeposit = transactions
       .filter(t => t.type === TransactionType.DEPOSIT || (t.receiverId && t.receiverId.toString() === userId))
-      // Remplacer la ligne 92-95 par:
       .sort((a: any, b: any) => {
         const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
         const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
         return dateB - dateA;
-    })[0];
+      })[0];
 
     const largestTransaction = transactions.length > 0 
       ? transactions.reduce((max, t) => t.amount > max.amount ? t : max, transactions[0])
@@ -144,11 +131,11 @@ export class TransactionsService {
   async mobileMoneyTransfer(userId: string, operator: string, phoneNumber: string, amount: number) {
     const user = await this.userModel.findById(userId);
     if (!user) {
-      throw new NotFoundException('User not found');
+      throw new NotFoundException('Utilisateur non trouvé');
     }
     
     if (user.balance < amount) {
-      throw new BadRequestException('Insufficient balance');
+      throw new BadRequestException('Solde insuffisant');
     }
 
     user.balance -= amount;
@@ -173,7 +160,7 @@ export class TransactionsService {
     const receiver = await this.userModel.findOne({ qrCode: receiverQrCode });
     
     if (!receiver) {
-      throw new NotFoundException('User not found');
+      throw new NotFoundException('Destinataire non trouvé');
     }
 
     return this.sendMoney(userId, {

@@ -1,4 +1,3 @@
-// Types pour les statistiques admin
 export interface DailyStat {
   date: string;
   users: number;
