@@ -27,14 +27,67 @@ export class WalletService {
         monthlyLimit: 50000000,
         isActive: true
       });
+      
+      // Vérifier si l'utilisateur a des transactions et synchroniser
+      await this.syncWalletBalance(userId, wallet);
     }
     
+    return wallet;
+  }
+
+  // AJOUTER CETTE MÉTHODE
+  async syncWalletBalance(userId: string, wallet?: WalletDocument) {
+    const userObjectId = new Types.ObjectId(userId);
+    
+    // Récupérer le wallet si non fourni
+    if (!wallet) {
+      wallet = await this.walletModel.findOne({ userId: userObjectId });
+      if (!wallet) return;
+    }
+    
+    // Calculer le solde réel à partir des transactions
+    const deposits = await this.transactionModel.aggregate([
+      { 
+        $match: { 
+          receiverId: userObjectId, 
+          status: 'completed',
+          type: { $in: ['deposit', 'transfer'] }
+        } 
+      },
+      { $group: { _id: null, total: { $sum: '$amount' } } }
+    ]);
+
+    const withdrawals = await this.transactionModel.aggregate([
+      { 
+        $match: { 
+          senderId: userObjectId, 
+          status: 'completed',
+          type: { $in: ['withdrawal', 'transfer'] }
+        } 
+      },
+      { $group: { _id: null, total: { $sum: '$amount' } } }
+    ]);
+
+    const totalDeposits = deposits.length > 0 ? deposits[0].total : 0;
+    const totalWithdrawals = withdrawals.length > 0 ? withdrawals[0].total : 0;
+    const calculatedBalance = totalDeposits - totalWithdrawals;
+
+    // Mettre à jour le wallet si nécessaire
+    if (wallet.balance !== calculatedBalance) {
+      wallet.balance = calculatedBalance;
+      await wallet.save();
+      console.log(`✅ Wallet synchronisé pour l'utilisateur ${userId}: ${calculatedBalance} Ar`);
+    }
+
     return wallet;
   }
 
   async getWalletStats(userId: string) {
     const wallet = await this.getWalletByUserId(userId);
     const userObjectId = new Types.ObjectId(userId);
+    
+    // Synchroniser avant de retourner les stats
+    await this.syncWalletBalance(userId, wallet);
     
     const transactions = await this.transactionModel
       .find({
@@ -76,12 +129,17 @@ export class WalletService {
 
   async getBalance(userId: string) {
     const wallet = await this.getWalletByUserId(userId);
+    await this.syncWalletBalance(userId, wallet);
     return { balance: wallet.balance };
   }
 
   async sendMoney(userId: string, data: { receiverId: string; amount: number; description?: string }) {
     const senderWallet = await this.getWalletByUserId(userId);
     const receiverWallet = await this.getWalletByUserId(data.receiverId);
+
+    // Synchroniser les wallets avant la transaction
+    await this.syncWalletBalance(userId, senderWallet);
+    await this.syncWalletBalance(data.receiverId, receiverWallet);
 
     if (senderWallet.balance < data.amount) {
       throw new BadRequestException('Solde insuffisant');
@@ -130,6 +188,7 @@ export class WalletService {
 
   async withdraw(userId: string, data: { amount: number; paymentMethod: string }) {
     const wallet = await this.getWalletByUserId(userId);
+    await this.syncWalletBalance(userId, wallet);
 
     if (wallet.balance < data.amount) {
       throw new BadRequestException('Solde insuffisant');
