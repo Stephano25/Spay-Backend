@@ -15,49 +15,64 @@ async function syncWallets() {
     const wallets = db.collection('wallets');
     
     console.log(`📊 ${users.length} utilisateurs trouvés`);
+    let updatedCount = 0;
+    let createdCount = 0;
     
     for (const user of users) {
       const userId = user._id;
+      console.log(`\n👤 Traitement de l'utilisateur: ${user.email || user._id}`);
+      
+      // Récupérer toutes les transactions de l'utilisateur
+      const userTransactions = await transactions.find({
+        $or: [
+          { senderId: userId },
+          { receiverId: userId }
+        ],
+        status: 'completed'
+      }).toArray();
+      
+      console.log(`   Transactions trouvées: ${userTransactions.length}`);
       
       // Calculer le solde à partir des transactions
-      const deposits = await transactions.aggregate([
-        { 
-          $match: { 
-            receiverId: userId, 
-            status: 'completed',
-            type: { $in: ['deposit', 'transfer'] }
-          } 
-        },
-        { $group: { _id: null, total: { $sum: '$amount' } } }
-      ]).toArray();
-
-      const withdrawals = await transactions.aggregate([
-        { 
-          $match: { 
-            senderId: userId, 
-            status: 'completed',
-            type: { $in: ['withdrawal', 'transfer'] }
-          } 
-        },
-        { $group: { _id: null, total: { $sum: '$amount' } } }
-      ]).toArray();
-
-      const totalDeposits = deposits.length > 0 ? deposits[0].total : 0;
-      const totalWithdrawals = withdrawals.length > 0 ? withdrawals[0].total : 0;
-      const calculatedBalance = totalDeposits - totalWithdrawals;
+      let calculatedBalance = 0;
       
-      // Mettre à jour ou créer le wallet
-      const wallet = await wallets.findOne({ userId });
+      for (const tx of userTransactions) {
+        // Si l'utilisateur est le destinataire (il reçoit de l'argent)
+        if (tx.receiverId && tx.receiverId.toString() === userId.toString()) {
+          calculatedBalance += tx.amount;
+          console.log(`   ➕ Reçu: ${tx.amount} Ar (${tx.type})`);
+        }
+        // Si l'utilisateur est l'expéditeur (il envoie de l'argent)
+        else if (tx.senderId && tx.senderId.toString() === userId.toString()) {
+          calculatedBalance -= tx.amount;
+          console.log(`   ➖ Envoyé: ${tx.amount} Ar (${tx.type})`);
+        }
+      }
       
-      if (wallet) {
-        if (wallet.balance !== calculatedBalance) {
+      console.log(`   💰 Solde calculé: ${calculatedBalance} Ar`);
+      
+      // Chercher le wallet existant
+      const existingWallet = await wallets.findOne({ userId });
+      
+      if (existingWallet) {
+        // Mettre à jour le wallet existant
+        if (existingWallet.balance !== calculatedBalance) {
           await wallets.updateOne(
             { userId },
-            { $set: { balance: calculatedBalance, updatedAt: new Date() } }
+            { 
+              $set: { 
+                balance: calculatedBalance, 
+                updatedAt: new Date() 
+              } 
+            }
           );
-          console.log(`✅ Wallet ${user.email} mis à jour: ${wallet.balance} → ${calculatedBalance} Ar`);
+          console.log(`   ✅ Wallet MIS À JOUR: ${existingWallet.balance} → ${calculatedBalance} Ar`);
+          updatedCount++;
+        } else {
+          console.log(`   ℹ️ Wallet déjà à jour: ${calculatedBalance} Ar`);
         }
       } else {
+        // Créer un nouveau wallet
         await wallets.insertOne({
           userId,
           balance: calculatedBalance,
@@ -68,11 +83,18 @@ async function syncWallets() {
           createdAt: new Date(),
           updatedAt: new Date()
         });
-        console.log(`✅ Wallet créé pour ${user.email}: ${calculatedBalance} Ar`);
+        console.log(`   ✅ Wallet CRÉÉ: ${calculatedBalance} Ar`);
+        createdCount++;
       }
     }
     
-    console.log('🎉 Synchronisation terminée!');
+    console.log('\n' + '='.repeat(50));
+    console.log(`🎉 Synchronisation terminée!`);
+    console.log(`📊 Statistiques:`);
+    console.log(`   - Wallets mis à jour: ${updatedCount}`);
+    console.log(`   - Wallets créés: ${createdCount}`);
+    console.log(`   - Total utilisateurs: ${users.length}`);
+    console.log('='.repeat(50));
     
   } catch (error) {
     console.error('❌ Erreur:', error);
@@ -81,4 +103,5 @@ async function syncWallets() {
   }
 }
 
-syncWallets();
+// Exécuter la synchronisation
+syncWallets().catch(console.error);

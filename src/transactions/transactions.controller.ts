@@ -28,9 +28,28 @@ export class TransactionsController {
   }
 
   @Post('mobile-money')
-  async mobileMoneyTransfer(@Req() req, @Body() data: { operator: string; phoneNumber: string; amount: number }) {
-    const userId = req.user.userId;
-    return this.transactionsService.mobileMoneyTransfer(userId, data.operator, data.phoneNumber, data.amount);
+  @UseGuards(JwtAuthGuard)
+  async mobileMoneyTransfer(
+    @Req() req,
+    @Body() data: { operator: string; phoneNumber: string; amount: number }
+  ) {
+    console.log('📥 Requête mobile-money reçue:', data);
+    console.log('👤 Utilisateur:', req.user.userId);
+  
+    try {
+      const userId = req.user.userId;
+      const result = await this.transactionsService.mobileMoneyTransfer(
+        userId,
+        data.operator,
+        data.phoneNumber,
+        data.amount
+      );
+      console.log('✅ Transfert réussi:', result);
+      return result;
+  }   catch (error) {
+      console.error('❌ Erreur transfert:', error);
+      throw error;
+    }
   }
 
   @Post('scan-pay')
