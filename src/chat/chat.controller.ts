@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, UseGuards, Req, UseInterceptors, UploadedFile } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards, Req, UseInterceptors, UploadedFile } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ChatService } from './chat.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -36,6 +36,23 @@ export class ChatController {
     return { success: true };
   }
 
+  @Put('message/:messageId')
+  async updateMessage(
+    @Req() req,
+    @Param('messageId') messageId: string,
+    @Body('content') content: string
+  ) {
+    const userId = req.user.userId;
+    return this.chatService.updateMessage(messageId, userId, content);
+  }
+
+  @Delete('message/:messageId')
+  async deleteMessage(@Req() req, @Param('messageId') messageId: string) {
+    const userId = req.user.userId;
+    await this.chatService.deleteMessage(messageId, userId);
+    return { success: true, message: 'Message supprimé avec succès' };
+  }
+
   @Post('upload')
   @UseInterceptors(FileInterceptor('file', {
     storage: diskStorage({
@@ -49,7 +66,7 @@ export class ChatController {
       },
     }),
     limits: {
-      fileSize: 150 * 1024 * 1024,
+      fileSize: 150 * 1024 * 1024, // 150 MB
     },
   }))
   async uploadFile(@UploadedFile() file: Express.Multer.File) {

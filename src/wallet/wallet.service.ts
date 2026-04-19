@@ -1,8 +1,8 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Wallet, WalletDocument } from './schemas/wallet.schema';
-import { Transaction, TransactionDocument } from '../transactions/schemas/transaction.schema';
+import { Transaction, TransactionDocument, TransactionStatus, TransactionType } from '../transactions/schemas/transaction.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
 
 @Injectable()
@@ -13,83 +13,238 @@ export class WalletService {
     @InjectModel(User.name) private userModel: Model<UserDocument>,
   ) {}
 
-  async getWalletByUserId(userId: string) {
+  /**
+   * Créer ou récupérer un wallet pour un utilisateur
+   */
+  async getOrCreateWallet(userId: string): Promise<WalletDocument> {
     const userObjectId = new Types.ObjectId(userId);
     let wallet = await this.walletModel.findOne({ userId: userObjectId });
     
     if (!wallet) {
-      // Créer un wallet si l'utilisateur n'en a pas
+      const user = await this.userModel.findById(userObjectId);
+      if (!user) {
+        throw new NotFoundException('Utilisateur non trouvé');
+      }
+
       wallet = await this.walletModel.create({
         userId: userObjectId,
         balance: 0,
+        totalReceived: 0,
+        totalSent: 0,
+        totalFees: 0,
+        pendingBalance: 0,
         currency: 'Ar',
         dailyLimit: 5000000,
         monthlyLimit: 50000000,
-        isActive: true
+        todaySpent: 0,
+        monthSpent: 0,
+        isActive: true,
+        settings: {
+          autoSave: true,
+          notificationThreshold: 10000
+        }
       });
-      
-      // Vérifier si l'utilisateur a des transactions et synchroniser
-      await this.syncWalletBalance(userId, wallet);
     }
+
+    // Vérifier et réinitialiser les limites quotidiennes/mensuelles
+    await this.checkAndResetLimits(wallet);
     
     return wallet;
   }
 
-  // AJOUTER CETTE MÉTHODE
-  async syncWalletBalance(userId: string, wallet?: WalletDocument) {
-    const userObjectId = new Types.ObjectId(userId);
-    
-    // Récupérer le wallet si non fourni
-    if (!wallet) {
-      wallet = await this.walletModel.findOne({ userId: userObjectId });
-      if (!wallet) return;
-    }
-    
-    // Calculer le solde réel à partir des transactions
-    const deposits = await this.transactionModel.aggregate([
-      { 
-        $match: { 
-          receiverId: userObjectId, 
-          status: 'completed',
-          type: { $in: ['deposit', 'transfer'] }
-        } 
-      },
-      { $group: { _id: null, total: { $sum: '$amount' } } }
-    ]);
+  /**
+   * Vérifier et réinitialiser les limites quotidiennes et mensuelles
+   */
+  private async checkAndResetLimits(wallet: WalletDocument): Promise<void> {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const thisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    const withdrawals = await this.transactionModel.aggregate([
-      { 
-        $match: { 
-          senderId: userObjectId, 
-          status: 'completed',
-          type: { $in: ['withdrawal', 'transfer'] }
-        } 
-      },
-      { $group: { _id: null, total: { $sum: '$amount' } } }
-    ]);
-
-    const totalDeposits = deposits.length > 0 ? deposits[0].total : 0;
-    const totalWithdrawals = withdrawals.length > 0 ? withdrawals[0].total : 0;
-    const calculatedBalance = totalDeposits - totalWithdrawals;
-
-    // Mettre à jour le wallet si nécessaire
-    if (wallet.balance !== calculatedBalance) {
-      wallet.balance = calculatedBalance;
-      await wallet.save();
-      console.log(`✅ Wallet synchronisé pour l'utilisateur ${userId}: ${calculatedBalance} Ar`);
+    // Réinitialiser la limite quotidienne
+    if (!wallet.lastResetDate || wallet.lastResetDate < today) {
+      wallet.todaySpent = 0;
+      wallet.lastResetDate = now;
     }
 
-    return wallet;
+    // Réinitialiser la limite mensuelle
+    if (wallet.lastResetDate && wallet.lastResetDate < thisMonth) {
+      wallet.monthSpent = 0;
+    }
+
+    await wallet.save();
   }
 
-  async getWalletStats(userId: string) {
-    const wallet = await this.getWalletByUserId(userId);
+  /**
+   * Vérifier les limites de transaction
+   */
+  private async checkLimits(wallet: WalletDocument, amount: number): Promise<void> {
+    // Vérifier la limite quotidienne
+    if (wallet.todaySpent + amount > wallet.dailyLimit) {
+      throw new BadRequestException(`Limite quotidienne dépassée (${wallet.dailyLimit} Ar)`);
+    }
+
+    // Vérifier la limite mensuelle
+    if (wallet.monthSpent + amount > wallet.monthlyLimit) {
+      throw new BadRequestException(`Limite mensuelle dépassée (${wallet.monthlyLimit} Ar)`);
+    }
+
+    // Vérifier le solde
+    if (wallet.balance < amount) {
+      throw new BadRequestException(`Solde insuffisant. Solde actuel: ${wallet.balance} Ar`);
+    }
+  }
+
+  /**
+   * Transférer de l'argent entre deux utilisateurs
+   */
+  async transferMoney(
+    senderId: string, 
+    receiverId: string, 
+    amount: number, 
+    description?: string
+  ): Promise<TransactionDocument> {
+    if (senderId === receiverId) {
+      throw new BadRequestException('Vous ne pouvez pas transférer à vous-même');
+    }
+
+    if (amount <= 0) {
+      throw new BadRequestException('Le montant doit être supérieur à 0');
+    }
+
+    const senderObjectId = new Types.ObjectId(senderId);
+    const receiverObjectId = new Types.ObjectId(receiverId);
+
+    // Vérifier que le receveur existe
+    const receiver = await this.userModel.findById(receiverObjectId);
+    if (!receiver) {
+      throw new NotFoundException('Utilisateur destinataire non trouvé');
+    }
+
+    // Récupérer les wallets
+    const senderWallet = await this.getOrCreateWallet(senderId);
+    const receiverWallet = await this.getOrCreateWallet(receiverId);
+
+    // Vérifier les limites
+    await this.checkLimits(senderWallet, amount);
+
+    // Calculer les frais (0.5% pour les transferts externes, 0% pour internes)
+    const isInternal = true; // À personnaliser selon votre logique
+    const fee = isInternal ? 0 : amount * 0.005;
+    const totalAmount = amount + fee;
+
+    // Créer la transaction
+    const transaction = await this.transactionModel.create({
+      senderId: senderObjectId,
+      receiverId: receiverObjectId,
+      type: TransactionType.TRANSFER,
+      amount: amount,
+      fee: fee,
+      totalAmount: totalAmount,
+      status: TransactionStatus.COMPLETED,
+      description: description || `Transfert à ${receiver.firstName} ${receiver.lastName}`,
+      reference: `TRF-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+      paymentMethod: 'wallet',
+      createdAt: new Date()
+    });
+
+    // Mettre à jour les soldes
+    senderWallet.balance -= totalAmount;
+    senderWallet.totalSent += amount;
+    senderWallet.totalFees += fee;
+    senderWallet.todaySpent += totalAmount;
+    senderWallet.monthSpent += totalAmount;
+
+    receiverWallet.balance += amount;
+    receiverWallet.totalReceived += amount;
+
+    // Sauvegarder les wallets
+    await senderWallet.save();
+    await receiverWallet.save();
+
+    // Retourner la transaction avec les détails
+    return transaction.populate(['senderId', 'receiverId']);
+  }
+
+  /**
+   * Déposer de l'argent dans un wallet
+   */
+  async deposit(userId: string, amount: number, paymentMethod: string): Promise<TransactionDocument> {
+    if (amount <= 0) {
+      throw new BadRequestException('Le montant doit être supérieur à 0');
+    }
+
     const userObjectId = new Types.ObjectId(userId);
-    
-    // Synchroniser avant de retourner les stats
-    await this.syncWalletBalance(userId, wallet);
-    
-    const transactions = await this.transactionModel
+    const wallet = await this.getOrCreateWallet(userId);
+
+    // Créer la transaction de dépôt
+    const transaction = await this.transactionModel.create({
+      receiverId: userObjectId,
+      type: TransactionType.DEPOSIT,
+      amount: amount,
+      fee: 0,
+      totalAmount: amount,
+      status: TransactionStatus.COMPLETED,
+      description: `Dépôt de ${amount} Ar via ${paymentMethod}`,
+      reference: `DEP-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+      paymentMethod: paymentMethod,
+      createdAt: new Date()
+    });
+
+    // Mettre à jour le solde
+    wallet.balance += amount;
+    wallet.totalReceived += amount;
+    await wallet.save();
+
+    return transaction.populate('receiverId');
+  }
+
+  /**
+   * Retirer de l'argent du wallet
+   */
+  async withdraw(userId: string, amount: number, paymentMethod: string): Promise<TransactionDocument> {
+    if (amount <= 0) {
+      throw new BadRequestException('Le montant doit être supérieur à 0');
+    }
+
+    const userObjectId = new Types.ObjectId(userId);
+    const wallet = await this.getOrCreateWallet(userId);
+
+    // Vérifier le solde
+    if (wallet.balance < amount) {
+      throw new BadRequestException(`Solde insuffisant. Solde actuel: ${wallet.balance} Ar`);
+    }
+
+    // Créer la transaction de retrait
+    const transaction = await this.transactionModel.create({
+      senderId: userObjectId,
+      type: TransactionType.WITHDRAWAL,
+      amount: amount,
+      fee: 0,
+      totalAmount: amount,
+      status: TransactionStatus.COMPLETED,
+      description: `Retrait de ${amount} Ar via ${paymentMethod}`,
+      reference: `WTH-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+      paymentMethod: paymentMethod,
+      createdAt: new Date()
+    });
+
+    // Mettre à jour le solde
+    wallet.balance -= amount;
+    wallet.totalSent += amount;
+    await wallet.save();
+
+    return transaction.populate('senderId');
+  }
+
+  /**
+   * Obtenir les statistiques du wallet
+   */
+  async getWalletStats(userId: string): Promise<any> {
+    const wallet = await this.getOrCreateWallet(userId);
+    const userObjectId = new Types.ObjectId(userId);
+
+    // Récupérer les dernières transactions
+    const recentTransactions = await this.transactionModel
       .find({
         $or: [
           { senderId: userObjectId },
@@ -99,129 +254,77 @@ export class WalletService {
       .sort({ createdAt: -1 })
       .limit(10)
       .populate('senderId', 'firstName lastName email')
-      .populate('receiverId', 'firstName lastName email')
-      .exec();
-
-    const totalDeposits = await this.transactionModel.aggregate([
-      { $match: { receiverId: userObjectId, type: 'deposit', status: 'completed' } },
-      { $group: { _id: null, total: { $sum: '$amount' } } }
-    ]);
-
-    const totalWithdrawals = await this.transactionModel.aggregate([
-      { $match: { senderId: userObjectId, type: 'withdrawal', status: 'completed' } },
-      { $group: { _id: null, total: { $sum: '$amount' } } }
-    ]);
-
-    const totalTransfers = await this.transactionModel.aggregate([
-      { $match: { senderId: userObjectId, type: 'transfer', status: 'completed' } },
-      { $group: { _id: null, total: { $sum: '$amount' } } }
-    ]);
+      .populate('receiverId', 'firstName lastName email');
 
     return {
-      totalBalance: wallet.balance,
-      totalTransactions: transactions.length,
-      totalDeposits: totalDeposits[0]?.total || 0,
-      totalWithdrawals: totalWithdrawals[0]?.total || 0,
-      totalTransfers: totalTransfers[0]?.total || 0,
-      recentTransactions: transactions
+      balance: wallet.balance,
+      totalReceived: wallet.totalReceived,
+      totalSent: wallet.totalSent,
+      totalFees: wallet.totalFees,
+      pendingBalance: wallet.pendingBalance,
+      currency: wallet.currency,
+      dailyLimit: wallet.dailyLimit,
+      monthlyLimit: wallet.monthlyLimit,
+      todaySpent: wallet.todaySpent,
+      monthSpent: wallet.monthSpent,
+      remainingDailyLimit: wallet.dailyLimit - wallet.todaySpent,
+      remainingMonthlyLimit: wallet.monthlyLimit - wallet.monthSpent,
+      recentTransactions: recentTransactions
     };
   }
 
-  async getBalance(userId: string) {
-    const wallet = await this.getWalletByUserId(userId);
-    await this.syncWalletBalance(userId, wallet);
-    return { balance: wallet.balance };
-  }
-
-  async sendMoney(userId: string, data: { receiverId: string; amount: number; description?: string }) {
-    const senderWallet = await this.getWalletByUserId(userId);
-    const receiverWallet = await this.getWalletByUserId(data.receiverId);
-
-    // Synchroniser les wallets avant la transaction
-    await this.syncWalletBalance(userId, senderWallet);
-    await this.syncWalletBalance(data.receiverId, receiverWallet);
-
-    if (senderWallet.balance < data.amount) {
-      throw new BadRequestException('Solde insuffisant');
-    }
-
-    const transaction = await this.transactionModel.create({
-      senderId: new Types.ObjectId(userId),
-      receiverId: new Types.ObjectId(data.receiverId),
-      type: 'transfer',
-      amount: data.amount,
-      fee: 0,
-      totalAmount: data.amount,
-      status: 'completed',
-      description: data.description || 'Transfert',
-      paymentMethod: 'wallet'
-    });
-
-    senderWallet.balance -= data.amount;
-    receiverWallet.balance += data.amount;
-    
-    await senderWallet.save();
-    await receiverWallet.save();
-
-    return transaction;
-  }
-
-  async deposit(userId: string, data: { amount: number; paymentMethod: string }) {
-    const wallet = await this.getWalletByUserId(userId);
-
-    const transaction = await this.transactionModel.create({
-      receiverId: new Types.ObjectId(userId),
-      type: 'deposit',
-      amount: data.amount,
-      fee: 0,
-      totalAmount: data.amount,
-      status: 'completed',
-      description: 'Dépôt',
-      paymentMethod: data.paymentMethod
-    });
-
-    wallet.balance += data.amount;
-    await wallet.save();
-
-    return transaction;
-  }
-
-  async withdraw(userId: string, data: { amount: number; paymentMethod: string }) {
-    const wallet = await this.getWalletByUserId(userId);
-    await this.syncWalletBalance(userId, wallet);
-
-    if (wallet.balance < data.amount) {
-      throw new BadRequestException('Solde insuffisant');
-    }
-
-    const transaction = await this.transactionModel.create({
-      senderId: new Types.ObjectId(userId),
-      type: 'withdrawal',
-      amount: data.amount,
-      fee: 0,
-      totalAmount: data.amount,
-      status: 'completed',
-      description: 'Retrait',
-      paymentMethod: data.paymentMethod
-    });
-
-    wallet.balance -= data.amount;
-    await wallet.save();
-
-    return transaction;
-  }
-
-  async generateQRCode(userId: string, amount?: number) {
-    const qrCode = `SPAYE-${userId}-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
-    
-    await this.walletModel.updateOne(
-      { userId: new Types.ObjectId(userId) },
-      { qrCode }
-    );
-
+  /**
+   * Obtenir le solde simple
+   */
+  async getBalance(userId: string): Promise<{ balance: number; currency: string }> {
+    const wallet = await this.getOrCreateWallet(userId);
     return {
-      qrCode,
-      expiresAt: new Date(Date.now() + 30 * 60 * 1000)
+      balance: wallet.balance,
+      currency: wallet.currency
     };
+  }
+
+  /**
+   * Synchroniser le wallet avec les transactions (correction des incohérences)
+   */
+  async syncWalletBalance(userId: string): Promise<WalletDocument> {
+    const userObjectId = new Types.ObjectId(userId);
+    const wallet = await this.getOrCreateWallet(userId);
+
+    // Calculer le solde réel à partir des transactions
+    const received = await this.transactionModel.aggregate([
+      { 
+        $match: { 
+          receiverId: userObjectId, 
+          status: TransactionStatus.COMPLETED,
+          type: { $in: [TransactionType.DEPOSIT, TransactionType.TRANSFER] }
+        } 
+      },
+      { $group: { _id: null, total: { $sum: '$amount' } } }
+    ]);
+
+    const sent = await this.transactionModel.aggregate([
+      { 
+        $match: { 
+          senderId: userObjectId, 
+          status: TransactionStatus.COMPLETED,
+          type: { $in: [TransactionType.WITHDRAWAL, TransactionType.TRANSFER] }
+        } 
+      },
+      { $group: { _id: null, total: { $sum: '$totalAmount' } } }
+    ]);
+
+    const totalReceived = received.length > 0 ? received[0].total : 0;
+    const totalSent = sent.length > 0 ? sent[0].total : 0;
+    const calculatedBalance = totalReceived - totalSent;
+
+    // Corriger si nécessaire
+    if (wallet.balance !== calculatedBalance) {
+      wallet.balance = calculatedBalance;
+      await wallet.save();
+      console.log(`✅ Wallet synchronisé pour ${userId}: ${calculatedBalance} Ar`);
+    }
+
+    return wallet;
   }
 }

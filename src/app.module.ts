@@ -4,24 +4,18 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { TransactionsModule } from './transactions/transactions.module';
-import { ChatModule } from './chat/chat.module';
-import { FriendsModule } from './friends/friends.module';
-import { WalletModule } from './wallet/wallet.module';
-import { ConversationsModule } from './conversations/conversations.module';
 import { AdminModule } from './admin/admin.module';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
+import { SettingsModule } from './settings/settings.module';
+import { LogsModule } from './logs/logs.module';
+import { WalletModule } from './wallet/wallet.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({
-      isGlobal: true,
-      envFilePath: '.env',
-    }),
+    ConfigModule.forRoot({ isGlobal: true }),
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
-        uri: configService.get<string>('MONGODB_URI') || 'mongodb://localhost:27017/spaye',
+        uri: configService.get<string>('MONGODB_URI'),
         useNewUrlParser: true,
         useUnifiedTopology: true,
       }),
@@ -30,13 +24,10 @@ import { AppService } from './app.service';
     AuthModule,
     UsersModule,
     TransactionsModule,
-    ChatModule,
-    FriendsModule,
-    WalletModule,
-    ConversationsModule,
     AdminModule,
+    SettingsModule,
+    LogsModule,
+    WalletModule, // Ajouter WalletModule
   ],
-  controllers: [AppController],
-  providers: [AppService],
 })
 export class AppModule {}

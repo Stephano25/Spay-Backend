@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, Req, Param, Put } from '@nestjs/common';
 import { WalletService } from './wallet.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
@@ -10,12 +10,6 @@ export class WalletController {
   @Get('me')
   async getMyWallet(@Req() req) {
     const userId = req.user.userId;
-    return this.walletService.getWalletByUserId(userId);
-  }
-
-  @Get('stats')
-  async getWalletStats(@Req() req) {
-    const userId = req.user.userId;
     return this.walletService.getWalletStats(userId);
   }
 
@@ -25,27 +19,36 @@ export class WalletController {
     return this.walletService.getBalance(userId);
   }
 
-  @Post('send')
-  async sendMoney(@Req() req, @Body() sendMoneyDto: any) {
+  @Post('transfer')
+  async transferMoney(
+    @Req() req,
+    @Body() body: { receiverId: string; amount: number; description?: string }
+  ) {
     const userId = req.user.userId;
-    return this.walletService.sendMoney(userId, sendMoneyDto);
+    return this.walletService.transferMoney(userId, body.receiverId, body.amount, body.description);
   }
 
   @Post('deposit')
-  async deposit(@Req() req, @Body() depositDto: any) {
+  async deposit(
+    @Req() req,
+    @Body() body: { amount: number; paymentMethod: string }
+  ) {
     const userId = req.user.userId;
-    return this.walletService.deposit(userId, depositDto);
+    return this.walletService.deposit(userId, body.amount, body.paymentMethod);
   }
 
   @Post('withdraw')
-  async withdraw(@Req() req, @Body() withdrawDto: any) {
+  async withdraw(
+    @Req() req,
+    @Body() body: { amount: number; paymentMethod: string }
+  ) {
     const userId = req.user.userId;
-    return this.walletService.withdraw(userId, withdrawDto);
+    return this.walletService.withdraw(userId, body.amount, body.paymentMethod);
   }
 
-  @Post('generate-qr')
-  async generateQRCode(@Req() req, @Body() body: { amount?: number }) {
+  @Post('sync')
+  async syncWallet(@Req() req) {
     const userId = req.user.userId;
-    return this.walletService.generateQRCode(userId, body.amount);
+    return this.walletService.syncWalletBalance(userId);
   }
 }

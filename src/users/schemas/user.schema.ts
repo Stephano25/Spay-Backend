@@ -9,7 +9,7 @@ export enum UserRole {
   SUPER_ADMIN = 'super_admin',
 }
 
-@Schema({ timestamps: true })
+@Schema({ timestamps: true }) // Ceci ajoute automatiquement createdAt et updatedAt
 export class User {
   @Prop({ required: true, unique: true })
   email: string;
@@ -26,16 +26,16 @@ export class User {
   @Prop({ unique: true, sparse: true })
   phoneNumber: string;
 
-  @Prop()
+  @Prop({ default: '' })
   profilePicture: string;
 
-  @Prop({ default: 0 })
+  @Prop({ default: 0, min: 0 })
   balance: number;
 
-  @Prop({ type: String, unique: true })
+  @Prop({ unique: true, sparse: true })
   qrCode: string;
 
-  @Prop({ type: [{ type: String }] })
+  @Prop({ type: [String], default: [] })
   friends: string[];
 
   @Prop({ default: false })
@@ -53,17 +53,23 @@ export class User {
   @Prop()
   lastLogin: Date;
 
-  @Prop()
+  @Prop({ default: '' })
   bio: string;
 
   @Prop({ type: Object, default: {} })
   settings: Record<string, any>;
-  
-  @Prop()
+
+  // Ces champs sont automatiquement ajoutés par { timestamps: true }
+  // mais vous pouvez les déclarer pour TypeScript
   createdAt?: Date;
-  
-  @Prop()
   updatedAt?: Date;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
+
+// Ajouter des indexes pour améliorer les performances
+UserSchema.index({ email: 1 });
+UserSchema.index({ phoneNumber: 1 });
+UserSchema.index({ qrCode: 1 });
+UserSchema.index({ role: 1 });
+UserSchema.index({ isActive: 1 });

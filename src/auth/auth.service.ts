@@ -3,7 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import * as bcrypt from 'bcrypt';
-import { User, UserDocument } from '../users/schemas/user.schema';
+import { User, UserDocument, UserRole } from '../users/schemas/user.schema';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 
@@ -59,7 +59,7 @@ export class AuthService {
       qrCode,
       balance: 0,
       friends: [],
-      role: 'user',
+      role: UserRole.USER,
       isActive: true,
     });
 
@@ -80,7 +80,7 @@ export class AuthService {
         qrCode: newUser.qrCode,
         role: newUser.role,
         isActive: newUser.isActive,
-        createdAt: newUser.createdAt,
+        createdAt: newUser.createdAt || new Date(), // Utiliser la date actuelle si undefined
       }
     };
   }
@@ -100,6 +100,11 @@ export class AuthService {
     
     if (!isPasswordValid) {
       throw new UnauthorizedException('Email ou mot de passe incorrect');
+    }
+    
+    // Vérifier si l'utilisateur est actif
+    if (!user.isActive) {
+      throw new UnauthorizedException('Votre compte est désactivé. Contactez l\'administrateur.');
     }
     
     // Mettre à jour la dernière connexion
@@ -122,9 +127,32 @@ export class AuthService {
         qrCode: user.qrCode,
         role: user.role,
         isActive: user.isActive,
-        createdAt: user.createdAt,
+        createdAt: user.createdAt || new Date(), // Utiliser la date actuelle si undefined
         lastLogin: user.lastLogin,
       }
     };
+  }
+
+  async isAuthenticated(token: string): Promise<boolean> {
+    try {
+      const payload = this.jwtService.verify(token);
+      const user = await this.userModel.findById(payload.sub);
+      return !!user && user.isActive;
+    } catch {
+      return false;
+    }
+  }
+
+  async isAdmin(userId: string): Promise<boolean> {
+    const user = await this.userModel.findById(userId);
+    return user?.role === UserRole.ADMIN || user?.role === UserRole.SUPER_ADMIN;
+  }
+
+  getTokenFromRequest(request: any): string | null {
+    const authHeader = request.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      return authHeader.substring(7);
+    }
+    return null;
   }
 }
