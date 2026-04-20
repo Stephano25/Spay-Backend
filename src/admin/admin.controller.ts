@@ -1,6 +1,5 @@
 import { Controller, Get, UseGuards, Patch, Param, Body, Delete, Post, HttpCode, HttpStatus } from '@nestjs/common';
 import { AdminService } from './admin.service';
-// Corriger le chemin - enlever le dossier 'guards' supplémentaire
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';

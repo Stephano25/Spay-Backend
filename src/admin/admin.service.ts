@@ -2,7 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { User, UserDocument, UserRole } from '../users/schemas/user.schema';
-import { Transaction, TransactionDocument, TransactionStatus } from '../transactions/schemas/transaction.schema';
+import { Transaction, TransactionDocument, TransactionStatus, TransactionType } from '../transactions/schemas/transaction.schema';
 import { Setting, SettingDocument } from '../settings/schemas/setting.schema';
 import { Log, LogDocument } from '../logs/schemas/log.schema';
 
@@ -259,14 +259,26 @@ export class AdminService {
     const totalUsers = await this.userModel.countDocuments();
     const activeUsers = await this.userModel.countDocuments({ isActive: true });
     
+    // Version corrigée - sans db.stats()
+    let databaseSize = 'Calcul en cours...';
+    try {
+      // Alternative: compter le nombre de documents pour estimer la taille
+      const userCount = totalUsers;
+      const transactionCount = await this.transactionModel.countDocuments();
+      const estimatedSize = Math.round((userCount * 500 + transactionCount * 200) / 1024 / 1024);
+      databaseSize = `${estimatedSize} MB`;
+    } catch (error) {
+      databaseSize = 'Non disponible';
+    }
+    
     return {
       uptime: this.formatUptime(uptime),
       memoryUsage: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)} MB / ${Math.round(memoryUsage.heapTotal / 1024 / 1024)} MB`,
-      cpuUsage: `${Math.round(Math.random() * 30 + 10)}%`,
+      cpuUsage: `${Math.round(process.cpuUsage().user / 1000000)}%`,
       activeSessions: activeUsers,
       activeUsers: activeUsers,
       totalUsers: totalUsers,
-      databaseSize: '156 MB' // Valeur par défaut
+      databaseSize: databaseSize
     };
   }
 
