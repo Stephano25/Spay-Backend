@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, ConflictException, NotFoundException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -6,6 +6,7 @@ import * as bcrypt from 'bcrypt';
 import { User, UserDocument, UserRole } from '../users/schemas/user.schema';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 
 @Injectable()
 export class AuthService {
@@ -80,7 +81,7 @@ export class AuthService {
         qrCode: newUser.qrCode,
         role: newUser.role,
         isActive: newUser.isActive,
-        createdAt: newUser.createdAt || new Date(), // Utiliser la date actuelle si undefined
+        createdAt: newUser.createdAt || new Date(),
       }
     };
   }
@@ -127,10 +128,43 @@ export class AuthService {
         qrCode: user.qrCode,
         role: user.role,
         isActive: user.isActive,
-        createdAt: user.createdAt || new Date(), // Utiliser la date actuelle si undefined
+        createdAt: user.createdAt || new Date(),
         lastLogin: user.lastLogin,
       }
     };
+  }
+
+  // Méthode pour changer le mot de passe
+  async changePassword(userId: string, changePasswordDto: ChangePasswordDto): Promise<{ message: string }> {
+    const { currentPassword, newPassword } = changePasswordDto;
+    
+    // Chercher l'utilisateur avec son mot de passe
+    const user = await this.userModel.findById(userId).select('+password');
+    
+    if (!user) {
+      throw new NotFoundException('Utilisateur non trouvé');
+    }
+    
+    // Vérifier le mot de passe actuel
+    const isPasswordValid = await bcrypt.compare(currentPassword, user.password);
+    
+    if (!isPasswordValid) {
+      throw new BadRequestException('Mot de passe actuel incorrect');
+    }
+    
+    // Vérifier que le nouveau mot de passe est différent
+    if (currentPassword === newPassword) {
+      throw new BadRequestException('Le nouveau mot de passe doit être différent de l\'ancien');
+    }
+    
+    // Hasher le nouveau mot de passe
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    
+    // Mettre à jour le mot de passe
+    user.password = hashedPassword;
+    await user.save();
+    
+    return { message: 'Mot de passe modifié avec succès' };
   }
 
   async isAuthenticated(token: string): Promise<boolean> {
