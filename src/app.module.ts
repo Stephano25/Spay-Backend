@@ -5,9 +5,14 @@ import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { TransactionsModule } from './transactions/transactions.module';
 import { AdminModule } from './admin/admin.module';
+import { WalletModule } from './wallet/wallet.module';
+import { FriendsModule } from './friends/friends.module';
+import { ChatModule } from './chat/chat.module';
+import { ConversationsModule } from './conversations/conversations.module';
 import { SettingsModule } from './settings/settings.module';
 import { LogsModule } from './logs/logs.module';
-import { WalletModule } from './wallet/wallet.module';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
 
 @Module({
   imports: [
@@ -16,8 +21,6 @@ import { WalletModule } from './wallet/wallet.module';
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
         uri: configService.get<string>('MONGODB_URI'),
-        useNewUrlParser: true,
-        useUnifiedTopology: true,
       }),
       inject: [ConfigService],
     }),
@@ -25,9 +28,14 @@ import { WalletModule } from './wallet/wallet.module';
     UsersModule,
     TransactionsModule,
     AdminModule,
+    WalletModule,
+    FriendsModule,
+    ChatModule,
+    ConversationsModule,
     SettingsModule,
     LogsModule,
-    WalletModule, // Ajouter WalletModule
   ],
+  controllers: [AppController],
+  providers: [AppService],
 })
 export class AppModule {}

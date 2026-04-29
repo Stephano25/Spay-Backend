@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards, Req, UseInterceptors, UploadedFile } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards, Req, UseInterceptors, UploadedFile, Query } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ChatService } from './chat.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -18,9 +18,16 @@ export class ChatController {
   }
 
   @Get('messages/:userId')
-  async getMessages(@Req() req, @Param('userId') otherUserId: string) {
+  async getMessages(
+    @Req() req, 
+    @Param('userId') otherUserId: string,
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '20'
+  ) {
     const userId = req.user.userId;
-    return this.chatService.getMessages(userId, otherUserId);
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    return this.chatService.getMessagesPaginated(userId, otherUserId, pageNum, limitNum);
   }
 
   @Post('send')
@@ -66,7 +73,7 @@ export class ChatController {
       },
     }),
     limits: {
-      fileSize: 150 * 1024 * 1024, // 150 MB
+      fileSize: 150 * 1024 * 1024,
     },
   }))
   async uploadFile(@UploadedFile() file: Express.Multer.File) {

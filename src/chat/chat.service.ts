@@ -14,9 +14,6 @@ export class ChatService {
     private jwtService: JwtService,
   ) {}
 
-  /**
-   * Valider un token JWT
-   */
   async validateUser(token: string): Promise<{ id: string; email: string } | null> {
     try {
       const decoded = this.jwtService.verify(token);
@@ -27,9 +24,6 @@ export class ChatService {
     }
   }
 
-  /**
-   * Sauvegarder un message
-   */
   async saveMessage(messageData: any): Promise<MessageResponseDto> {
     try {
       const senderObjectId = new Types.ObjectId(messageData.senderId);
@@ -84,14 +78,10 @@ export class ChatService {
     }
   }
 
-  /**
-   * Récupérer les conversations d'un utilisateur
-   */
   async getConversations(userId: string): Promise<any[]> {
     try {
       const userObjectId = new Types.ObjectId(userId);
 
-      // Récupérer tous les messages où l'utilisateur est impliqué
       const messages = await this.messageModel
         .find({
           $or: [{ senderId: userObjectId }, { receiverId: userObjectId }],
@@ -109,17 +99,13 @@ export class ChatService {
         const senderId = message.senderId?._id?.toString() || message.senderId?.toString();
         const receiverId = message.receiverId?._id?.toString() || message.receiverId?.toString();
         
-        // Déterminer l'autre utilisateur
         const otherUserId = senderId === userId ? receiverId : senderId;
         
-        // Éviter les doublons
         if (processedUsers.has(otherUserId)) continue;
         
-        // Récupérer les infos de l'autre utilisateur
         const otherUser = senderId === userId ? message.receiverId : message.senderId;
 
         if (otherUser) {
-          // Compter les messages non lus
           const unreadCount = await this.messageModel.countDocuments({
             senderId: new Types.ObjectId(otherUserId),
             receiverId: userObjectId,
@@ -152,9 +138,6 @@ export class ChatService {
     }
   }
 
-  /**
-   * Récupérer les messages entre deux utilisateurs
-   */
   async getMessages(userId: string, otherUserId: string): Promise<MessageResponseDto[]> {
     try {
       if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(otherUserId)) {
@@ -203,9 +186,57 @@ export class ChatService {
     }
   }
 
-  /**
-   * Envoyer un message
-   */
+  async getMessagesPaginated(userId: string, otherUserId: string, page: number = 1, limit: number = 20): Promise<MessageResponseDto[]> {
+    try {
+      if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(otherUserId)) {
+        throw new BadRequestException('ID utilisateur invalide');
+      }
+
+      const userObjectId = new Types.ObjectId(userId);
+      const otherObjectId = new Types.ObjectId(otherUserId);
+      const skip = (page - 1) * limit;
+
+      const messages = await this.messageModel
+        .find({
+          $or: [
+            { senderId: userObjectId, receiverId: otherObjectId },
+            { senderId: otherObjectId, receiverId: userObjectId },
+          ],
+        })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate('senderId', 'firstName lastName profilePicture')
+        .lean()
+        .exec();
+
+      return (messages as any[]).reverse().map(msg => ({
+        id: msg._id.toString(),
+        senderId: msg.senderId?._id?.toString() || msg.senderId?.toString(),
+        receiverId: msg.receiverId?.toString(),
+        type: msg.type,
+        content: msg.content,
+        fileUrl: msg.fileUrl,
+        fileName: msg.fileName,
+        fileSize: msg.fileSize,
+        emoji: msg.emoji,
+        isRead: msg.isRead,
+        isDelivered: msg.isDelivered,
+        createdAt: msg.createdAt,
+        moneyTransfer: msg.moneyTransfer,
+        sender: msg.senderId ? {
+          id: msg.senderId._id?.toString() || msg.senderId.toString(),
+          firstName: msg.senderId.firstName || 'Utilisateur',
+          lastName: msg.senderId.lastName || '',
+          profilePicture: msg.senderId.profilePicture,
+        } : undefined,
+      }));
+    } catch (error) {
+      console.error('❌ Erreur récupération messages paginés:', error);
+      throw new BadRequestException('Erreur lors de la récupération des messages');
+    }
+  }
+
   async sendMessage(senderId: string, sendMessageDto: SendMessageDto): Promise<MessageResponseDto> {
     try {
       if (!Types.ObjectId.isValid(senderId) || !Types.ObjectId.isValid(sendMessageDto.receiverId)) {
@@ -215,7 +246,6 @@ export class ChatService {
       const senderObjectId = new Types.ObjectId(senderId);
       const receiverObjectId = new Types.ObjectId(sendMessageDto.receiverId);
 
-      // Vérifier que le destinataire existe
       const receiver = await this.userModel.findById(receiverObjectId);
       if (!receiver) {
         throw new NotFoundException('Destinataire non trouvé');
@@ -270,9 +300,6 @@ export class ChatService {
     }
   }
 
-  /**
-   * Marquer les messages comme lus
-   */
   async markAsRead(userId: string, senderId: string): Promise<void> {
     try {
       if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(senderId)) {
@@ -295,9 +322,6 @@ export class ChatService {
     }
   }
 
-  /**
-   * Uploader un fichier
-   */
   async uploadFile(file: Express.Multer.File): Promise<{ url: string; fileName: string; fileSize: number }> {
     try {
       const fileUrl = `/uploads/${file.filename}`;
@@ -312,9 +336,6 @@ export class ChatService {
     }
   }
 
-  /**
-   * Supprimer un message (soft delete ou hard delete)
-   */
   async deleteMessage(messageId: string, userId: string): Promise<void> {
     try {
       if (!Types.ObjectId.isValid(messageId)) {
@@ -326,12 +347,10 @@ export class ChatService {
         throw new NotFoundException('Message non trouvé');
       }
 
-      // Vérifier que l'utilisateur est l'expéditeur
       if (message.senderId.toString() !== userId) {
         throw new BadRequestException('Vous ne pouvez supprimer que vos propres messages');
       }
 
-      // Soft delete : marquer comme supprimé ou hard delete
       await message.deleteOne();
     } catch (error) {
       console.error('❌ Erreur suppression message:', error);
@@ -339,9 +358,6 @@ export class ChatService {
     }
   }
 
-  /**
-   * Modifier un message
-   */
   async updateMessage(messageId: string, userId: string, content: string): Promise<MessageResponseDto> {
     try {
       if (!Types.ObjectId.isValid(messageId)) {
@@ -353,12 +369,10 @@ export class ChatService {
         throw new NotFoundException('Message non trouvé');
       }
 
-      // Vérifier que l'utilisateur est l'expéditeur
       if (message.senderId.toString() !== userId) {
         throw new BadRequestException('Vous ne pouvez modifier que vos propres messages');
       }
 
-      // Vérifier que le message est de type texte
       if (message.type !== 'text') {
         throw new BadRequestException('Seuls les messages texte peuvent être modifiés');
       }

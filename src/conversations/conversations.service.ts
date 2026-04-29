@@ -12,6 +12,14 @@ export class ConversationsService {
   ) {}
 
   async createConversation(participants: string[]): Promise<ConversationDocument> {
+    const existingConversation = await this.conversationModel.findOne({
+      participants: { $all: participants.map(id => new Types.ObjectId(id)), $size: participants.length }
+    });
+    
+    if (existingConversation) {
+      return existingConversation;
+    }
+    
     const participantObjectIds = participants.map(id => new Types.ObjectId(id));
     
     const conversation = new this.conversationModel({

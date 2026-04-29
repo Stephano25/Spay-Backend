@@ -23,7 +23,7 @@ import { FriendsModule } from '../friends/friends.module';
       }),
       inject: [ConfigService],
     }),
-    forwardRef(() => FriendsModule),
+    forwardRef(() => FriendsModule), // Utiliser forwardRef pour résoudre la dépendance circulaire
   ],
   controllers: [ChatController],
   providers: [ChatService, ChatGateway],
