@@ -1,7 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Model } from 'mongoose';
 import { User, UserDocument } from './schemas/user.schema';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Injectable()
 export class UsersService {
@@ -86,7 +88,6 @@ export class UsersService {
       throw new NotFoundException('Utilisateur non trouvé');
     }
 
-    // Retourner les settings ou des valeurs par défaut
     return (user as any).settings || {
       notifications: {
         email: true,
@@ -127,5 +128,55 @@ export class UsersService {
     }
 
     return { success: true, settings: (user as any).settings };
+  }
+
+  async updateProfilePicture(userId: string, profilePictureUrl: string): Promise<User> {
+    const user = await this.userModel.findById(userId);
+    if (!user) {
+      throw new NotFoundException('Utilisateur non trouvé');
+    }
+    
+    if (user.profilePicture) {
+      const oldFileName = user.profilePicture.split('/').pop();
+      if (oldFileName) {
+        const oldPath = path.join(process.cwd(), 'uploads', 'profiles', oldFileName);
+        if (fs.existsSync(oldPath)) {
+          try {
+            fs.unlinkSync(oldPath);
+          } catch (err) {
+            console.error('Erreur suppression ancienne photo:', err);
+          }
+        }
+      }
+    }
+    
+    user.profilePicture = profilePictureUrl;
+    await user.save();
+    return user;
+  }
+
+  async deleteProfilePicture(userId: string): Promise<User> {
+    const user = await this.userModel.findById(userId);
+    if (!user) {
+      throw new NotFoundException('Utilisateur non trouvé');
+    }
+    
+    if (user.profilePicture) {
+      const oldFileName = user.profilePicture.split('/').pop();
+      if (oldFileName) {
+        const oldPath = path.join(process.cwd(), 'uploads', 'profiles', oldFileName);
+        if (fs.existsSync(oldPath)) {
+          try {
+            fs.unlinkSync(oldPath);
+          } catch (err) {
+            console.error('Erreur suppression photo:', err);
+          }
+        }
+      }
+      user.profilePicture = null;
+      await user.save();
+    }
+    
+    return user;
   }
 }
