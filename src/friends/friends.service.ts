@@ -130,7 +130,6 @@ export class FriendsService {
     }));
   }
 
-  // friends/friends.service.ts
   async getBlockedUsers(userId: string): Promise<any[]> {
     const userObjectId = new Types.ObjectId(userId);
     const blockedRelations = await this.friendModel
@@ -189,5 +188,36 @@ export class FriendsService {
       hasPendingRequest: false,
       isBlocked: false,
     }));
+  }
+
+  // ✅ Méthode ajoutée à l'intérieur de la classe
+  async findUsersByPhones(phones: string[], currentUserId: string): Promise<any[]> {
+    const cleanPhones = phones.map(p => p.replace(/\s/g, '').replace(/[^0-9]/g, ''));
+    const users = await this.userModel.find({
+      phoneNumber: { $in: cleanPhones },
+      _id: { $ne: new Types.ObjectId(currentUserId) },
+      isActive: true
+    }).select('firstName lastName email phoneNumber profilePicture isOnline lastSeen').lean();
+
+    const existingFriends = await this.friendModel.find({
+      $or: [{ userId: currentUserId }, { friendId: currentUserId }],
+      status: { $in: ['accepted', 'pending', 'blocked'] }
+    });
+    const excludedIds = existingFriends.map(f =>
+      f.userId.toString() === currentUserId ? f.friendId.toString() : f.userId.toString()
+    );
+
+    return users
+      .filter(u => !excludedIds.includes(u._id.toString()))
+      .map(u => ({
+        id: u._id,
+        firstName: u.firstName,
+        lastName: u.lastName,
+        email: u.email,
+        profilePicture: u.profilePicture,
+        isFriend: false,
+        hasPendingRequest: false,
+        isBlocked: false
+      }));
   }
 }

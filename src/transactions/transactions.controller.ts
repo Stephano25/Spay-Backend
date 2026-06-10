@@ -1,4 +1,3 @@
-// src/transactions/transactions.controller.ts
 import { Controller, Get, Post, Body, UseGuards, Req } from '@nestjs/common';
 import { TransactionsService } from './transactions.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -21,7 +20,6 @@ export class TransactionsController {
     return this.transactionsService.getUserTransactions(userId);
   }
 
-  // ✅ NOUVELLE ROUTE : récupère toutes les transactions de l'utilisateur
   @Get('all')
   async getAllTransactions(@Req() req) {
     const userId = req.user.userId;

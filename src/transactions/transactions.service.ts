@@ -79,7 +79,6 @@ export class TransactionsService {
     return { totalBalance, totalTransactions, lastThreeTransactions, largestTransaction };
   }
 
-  // transactions/transactions.service.ts
   async scanAndPay(userId: string, receiverQrCode: string, amount: number, description?: string) {
     const receiver = await this.userModel.findOne({ qrCode: receiverQrCode });
     if (!receiver) {
