@@ -147,4 +147,35 @@ export class AdminService {
     const minutes = Math.floor((seconds % 3600) / 60);
     return `${days}j ${hours}h ${minutes}min`;
   }
+
+  // admin/admin.service.ts
+
+  async getTransactionById(transactionId: string) {
+    if (!Types.ObjectId.isValid(transactionId)) {
+      throw new NotFoundException('ID transaction invalide');
+    }
+    const transaction = await this.transactionModel.findById(transactionId)
+      .populate('senderId', 'firstName lastName email')
+      .populate('receiverId', 'firstName lastName email');
+    if (!transaction) {
+      throw new NotFoundException('Transaction non trouvée');
+    }
+    return transaction;
+  }
+
+  async updateUserRole(userId: string, role: string) {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new NotFoundException('ID utilisateur invalide');
+    }
+    const user = await this.userModel.findByIdAndUpdate(userId, { role }, { new: true }).select('-password');
+    if (!user) {
+      throw new NotFoundException('Utilisateur non trouvé');
+    }
+    return user;
+  }
+
+  async clearCache() {
+    // Ici, vous pouvez implémenter la logique de vidage du cache (Redis, etc.)
+    return { message: 'Cache vidé avec succès' };
+  }
 }

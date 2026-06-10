@@ -104,4 +104,51 @@ export class ChatService {
       sender: { id: populated.senderId._id.toString(), firstName: populated.senderId.firstName, lastName: populated.senderId.lastName, profilePicture: populated.senderId.profilePicture },
     };
   }
+
+  // chat/chat.service.ts
+  async getMessagesPaginated(userId: string, otherUserId: string, page: number = 1, limit: number = 20): Promise<MessageResponseDto[]> {
+    if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(otherUserId)) {
+      throw new BadRequestException('ID utilisateur invalide');
+    }
+    const userObjectId = new Types.ObjectId(userId);
+    const otherObjectId = new Types.ObjectId(otherUserId);
+    const skip = (page - 1) * limit;
+
+    const messages = await this.messageModel
+      .find({
+        $or: [
+          { senderId: userObjectId, receiverId: otherObjectId },
+          { senderId: otherObjectId, receiverId: userObjectId },
+        ],
+      })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate('senderId', 'firstName lastName profilePicture')
+      .lean()
+      .exec();
+
+    // Retourner dans l'ordre chronologique croissant pour l'affichage
+    return (messages as any[]).reverse().map(msg => ({
+      id: msg._id.toString(),
+      senderId: msg.senderId?._id?.toString() || msg.senderId?.toString(),
+      receiverId: msg.receiverId?.toString(),
+      type: msg.type,
+      content: msg.content,
+      fileUrl: msg.fileUrl,
+      fileName: msg.fileName,
+      fileSize: msg.fileSize,
+      emoji: msg.emoji,
+      isRead: msg.isRead,
+      isDelivered: msg.isDelivered,
+      createdAt: msg.createdAt,
+      moneyTransfer: msg.moneyTransfer,
+      sender: msg.senderId ? {
+        id: msg.senderId._id?.toString() || msg.senderId.toString(),
+        firstName: msg.senderId.firstName || 'Utilisateur',
+        lastName: msg.senderId.lastName || '',
+        profilePicture: msg.senderId.profilePicture,
+      } : undefined,
+    }));
+  }
 }

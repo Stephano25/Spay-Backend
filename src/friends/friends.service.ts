@@ -129,4 +129,65 @@ export class FriendsService {
       return { id: user._id, firstName: user.firstName, lastName: user.lastName, email: user.email, phoneNumber: user.phoneNumber, profilePicture: user.profilePicture, isFriend: friendship?.status === 'accepted', hasPendingRequest: friendship?.status === 'pending', isBlocked: friendship?.status === 'blocked', blockedBy: friendship?.blockedBy?.toString() };
     }));
   }
+
+  // friends/friends.service.ts
+  async getBlockedUsers(userId: string): Promise<any[]> {
+    const userObjectId = new Types.ObjectId(userId);
+    const blockedRelations = await this.friendModel
+      .find({
+        $or: [{ userId: userObjectId }, { friendId: userObjectId }],
+        status: 'blocked',
+        blockedBy: userObjectId,
+      })
+      .populate('userId', 'firstName lastName email phoneNumber profilePicture')
+      .populate('friendId', 'firstName lastName email phoneNumber profilePicture')
+      .exec();
+
+    return blockedRelations.map(f => {
+      const blockedUser = f.userId._id.toString() === userId ? f.friendId : f.userId;
+      return {
+        id: f._id,
+        userId: f.userId._id,
+        friendId: f.friendId._id,
+        status: f.status,
+        blockedBy: f.blockedBy,
+        createdAt: f.createdAt,
+        friend: blockedUser,
+      };
+    });
+  }
+
+  async getSuggestions(userId: string): Promise<any[]> {
+    const userObjectId = new Types.ObjectId(userId);
+    const existingFriends = await this.friendModel.find({
+      $or: [{ userId: userObjectId }, { friendId: userObjectId }],
+    });
+
+    const existingFriendIds = existingFriends.map(f =>
+      f.userId.toString() === userId ? f.friendId.toString() : f.userId.toString()
+    );
+    existingFriendIds.push(userId);
+
+    const suggestions = await this.userModel
+      .find({
+        _id: { $nin: existingFriendIds.map(id => new Types.ObjectId(id)) },
+        isActive: true,
+      })
+      .limit(10)
+      .select('firstName lastName email phoneNumber profilePicture')
+      .lean()
+      .exec();
+
+    return suggestions.map(s => ({
+      id: s._id,
+      firstName: s.firstName,
+      lastName: s.lastName,
+      email: s.email,
+      phoneNumber: s.phoneNumber,
+      profilePicture: s.profilePicture,
+      isFriend: false,
+      hasPendingRequest: false,
+      isBlocked: false,
+    }));
+  }
 }

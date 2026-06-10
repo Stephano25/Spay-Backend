@@ -78,4 +78,17 @@ export class TransactionsService {
     const largestTransaction = transactions.length ? transactions.reduce((max, t) => t.amount > max.amount ? t : max, transactions[0]) : null;
     return { totalBalance, totalTransactions, lastThreeTransactions, largestTransaction };
   }
+
+  // transactions/transactions.service.ts
+  async scanAndPay(userId: string, receiverQrCode: string, amount: number, description?: string) {
+    const receiver = await this.userModel.findOne({ qrCode: receiverQrCode });
+    if (!receiver) {
+      throw new NotFoundException('Destinataire non trouvé');
+    }
+    return this.sendMoney(userId, {
+      receiverId: receiver._id.toString(),
+      amount,
+      description: description || 'Paiement par scan',
+    });
+  }
 }

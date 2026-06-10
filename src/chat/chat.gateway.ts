@@ -92,4 +92,15 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const senderSocketIds = this.userSockets.get(data.senderId) || [];
     senderSocketIds.forEach(sid => this.server.to(sid).emit('messagesRead', { by: userId }));
   }
+
+  // chat/chat.gateway.ts
+  // Ajoutez cette méthode publique dans la classe ChatGateway
+  notifyUser(userId: string, event: string, data: any) {
+    const socketIds = this.userSockets.get(userId);
+    if (socketIds) {
+      socketIds.forEach(socketId => {
+        this.server.to(socketId).emit(event, data);
+      });
+    }
+  }
 }
