@@ -1,7 +1,7 @@
-import { Controller, Get, Post, Body, UseGuards, Req, Param } from '@nestjs/common';
+// src/transactions/transactions.controller.ts
+import { Controller, Get, Post, Body, UseGuards, Req } from '@nestjs/common';
 import { TransactionsService } from './transactions.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { SendMoneyDto } from './dto/send-money.dto';
 
 @Controller('transactions')
@@ -21,6 +21,13 @@ export class TransactionsController {
     return this.transactionsService.getUserTransactions(userId);
   }
 
+  // ✅ NOUVELLE ROUTE : récupère toutes les transactions de l'utilisateur
+  @Get('all')
+  async getAllTransactions(@Req() req) {
+    const userId = req.user.userId;
+    return this.transactionsService.getUserTransactions(userId);
+  }
+
   @Post('send')
   async sendMoney(@Req() req, @Body() sendMoneyDto: SendMoneyDto) {
     const userId = req.user.userId;
@@ -28,28 +35,17 @@ export class TransactionsController {
   }
 
   @Post('mobile-money')
-  @UseGuards(JwtAuthGuard)
   async mobileMoneyTransfer(
     @Req() req,
     @Body() data: { operator: string; phoneNumber: string; amount: number }
   ) {
-    console.log('📥 Requête mobile-money reçue:', data);
-    console.log('👤 Utilisateur:', req.user.userId);
-  
-    try {
-      const userId = req.user.userId;
-      const result = await this.transactionsService.mobileMoneyTransfer(
-        userId,
-        data.operator,
-        data.phoneNumber,
-        data.amount
-      );
-      console.log('✅ Transfert réussi:', result);
-      return result;
-  }   catch (error) {
-      console.error('❌ Erreur transfert:', error);
-      throw error;
-    }
+    const userId = req.user.userId;
+    return this.transactionsService.mobileMoneyTransfer(
+      userId,
+      data.operator,
+      data.phoneNumber,
+      data.amount
+    );
   }
 
   @Post('scan-pay')
