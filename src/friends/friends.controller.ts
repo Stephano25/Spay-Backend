@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Delete, Body, Param, UseGuards, Req, Query } from '@nestjs/common';
+// src/friends/friends.controller.ts
+import { Controller, Get, Post, Delete, Body, Param, UseGuards, Req, Query, BadRequestException } from '@nestjs/common';
 import { FriendsService } from './friends.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
@@ -29,6 +30,9 @@ export class FriendsController {
 
   @Get('search')
   async searchUsers(@Req() req, @Query('q') query: string) {
+    if (!query || query.length < 2) {
+      return [];
+    }
     return this.friendsService.searchUsers(query, req.user.userId);
   }
 
@@ -39,6 +43,10 @@ export class FriendsController {
 
   @Post('request/:friendId')
   async sendFriendRequest(@Req() req, @Param('friendId') friendId: string) {
+    // Validation simple de l'ID
+    if (!friendId || friendId.length !== 24) {
+      throw new BadRequestException('ID utilisateur invalide');
+    }
     return this.friendsService.sendFriendRequest(req.user.userId, friendId);
   }
 
