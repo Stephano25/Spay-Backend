@@ -1,102 +1,87 @@
-import {
-  WebSocketGateway,
-  WebSocketServer,
-  SubscribeMessage,
-  OnGatewayConnection,
-  OnGatewayDisconnect,
-  ConnectedSocket,
-  MessageBody,
-} from '@nestjs/websockets';
+import { WebSocketGateway, WebSocketServer, SubscribeMessage, OnGatewayConnection, OnGatewayDisconnect, ConnectedSocket, MessageBody } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Inject, forwardRef } from '@nestjs/common';
+import { forwardRef, Inject } from '@nestjs/common';
 import { ChatService } from './chat.service';
 import { FriendsService } from '../friends/friends.service';
+import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 
-@WebSocketGateway({ 
-  cors: { 
-    origin: ['http://localhost:4200', 'http://localhost:3000'], 
-    credentials: true 
-  } 
-})
+@WebSocketGateway({ cors: { origin: ['http://localhost:4200', 'http://localhost:3000'], credentials: true }, namespace: '/' })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
-  @WebSocketServer()
-  server: Server;
-  private connectedUsers: Map<string, string> = new Map();
+  @WebSocketServer() server: Server;
+  private connectedUsers = new Map<string, string>(); // userId -> socketId
+  private userSockets = new Map<string, string[]>();   // userId -> socketIds
 
   constructor(
     private chatService: ChatService,
-    @Inject(forwardRef(() => FriendsService)) 
-    private friendsService: FriendsService,
+    @Inject(forwardRef(() => FriendsService)) private friendsService: FriendsService,
+    private jwtService: JwtService,
+    private configService: ConfigService,
   ) {}
 
   async handleConnection(client: Socket) {
     try {
-      const token = client.handshake.auth?.token;
-      if (!token) {
-        client.disconnect();
-        return;
-      }
-      const user = await this.chatService.validateUser(token);
-      if (user?.id) {
-        this.connectedUsers.set(user.id, client.id);
-        client.data.userId = user.id;
-        client.join(`user_${user.id}`);
-        this.server.emit('userOnline', { userId: user.id, isOnline: true });
-        client.emit('onlineUsers', Array.from(this.connectedUsers.keys()));
-      } else {
-        client.disconnect();
-      }
-    } catch (error) {
-      console.error('Connection error:', error);
-      client.disconnect();
-    }
+      const token = client.handshake.auth?.token || client.handshake.headers?.authorization?.replace('Bearer ', '');
+      if (!token) return client.disconnect();
+      const payload = this.jwtService.verify(token, { secret: this.configService.get('JWT_SECRET') });
+      const userId = payload.sub;
+      if (!userId) return client.disconnect();
+      client.data.userId = userId;
+      this.connectedUsers.set(userId, client.id);
+      if (!this.userSockets.has(userId)) this.userSockets.set(userId, []);
+      this.userSockets.get(userId).push(client.id);
+      client.join(`user_${userId}`);
+      const friends = await this.friendsService.getFriends(userId);
+      const friendIds = friends.map(f => f.friendId || f.userId);
+      friendIds.forEach(fid => this.server.to(`user_${fid}`).emit('userOnline', { userId, isOnline: true }));
+      client.emit('onlineUsers', Array.from(this.connectedUsers.keys()));
+    } catch (error) { client.disconnect(); }
   }
 
   handleDisconnect(client: Socket) {
     const userId = client.data?.userId;
     if (userId) {
-      this.connectedUsers.delete(userId);
-      this.server.emit('userOnline', { userId, isOnline: false });
+      const sockets = this.userSockets.get(userId) || [];
+      const index = sockets.indexOf(client.id);
+      if (index !== -1) sockets.splice(index, 1);
+      if (sockets.length === 0) {
+        this.userSockets.delete(userId);
+        this.connectedUsers.delete(userId);
+        this.friendsService.getFriends(userId).then(friends => {
+          const friendIds = friends.map(f => f.friendId || f.userId);
+          friendIds.forEach(fid => this.server.to(`user_${fid}`).emit('userOnline', { userId, isOnline: false }));
+        }).catch(console.error);
+      }
     }
   }
 
   @SubscribeMessage('sendMessage')
   async handleMessage(@ConnectedSocket() client: Socket, @MessageBody() data: any) {
     const senderId = client.data?.userId;
-    if (!senderId) {
-      client.emit('error', { message: 'Non authentifié' });
-      return;
-    }
-
-    const canSend = await this.canSendMessage(senderId, data.receiverId);
-    if (!canSend) {
-      client.emit('messageBlocked', { receiverId: data.receiverId, reason: 'Bloqué' });
-      return;
-    }
-
+    if (!senderId) return client.emit('error', { message: 'Non authentifié' });
+    const canSend = await this.friendsService.checkBlockStatus(senderId, data.receiverId);
+    if (!canSend.canMessage) return client.emit('messageBlocked', { receiverId: data.receiverId, reason: 'Bloqué' });
     try {
       const message = await this.chatService.saveMessage({ ...data, senderId });
-      const receiverSocketId = this.connectedUsers.get(data.receiverId);
-      if (receiverSocketId) {
-        this.server.to(receiverSocketId).emit('newMessage', message);
-      }
+      const receiverSocketIds = this.userSockets.get(data.receiverId) || [];
+      receiverSocketIds.forEach(sid => this.server.to(sid).emit('newMessage', message));
       client.emit('messageSent', message);
-    } catch (error) {
-      console.error('Send message error:', error);
-      client.emit('error', { message: 'Erreur envoi' });
-    }
+      this.server.to(`user_${data.receiverId}`).emit('conversationUpdated', {
+        userId: senderId,
+        lastMessage: message.content || (message.type === 'emoji' ? message.emoji : '[Média]'),
+        lastMessageTime: message.createdAt
+      });
+    } catch (error) { client.emit('error', { message: 'Erreur envoi' }); }
   }
 
   @SubscribeMessage('typing')
   async handleTyping(@ConnectedSocket() client: Socket, @MessageBody() data: { receiverId: string; isTyping: boolean }) {
     const senderId = client.data?.userId;
     if (!senderId) return;
-    const canSend = await this.canSendMessage(senderId, data.receiverId);
-    if (!canSend) return;
-    const receiverSocketId = this.connectedUsers.get(data.receiverId);
-    if (receiverSocketId) {
-      this.server.to(receiverSocketId).emit('userTyping', { userId: senderId, isTyping: data.isTyping });
-    }
+    const canSend = await this.friendsService.checkBlockStatus(senderId, data.receiverId);
+    if (!canSend.canMessage) return;
+    const receiverSocketIds = this.userSockets.get(data.receiverId) || [];
+    receiverSocketIds.forEach(sid => this.server.to(sid).emit('userTyping', { userId: senderId, isTyping: data.isTyping }));
   }
 
   @SubscribeMessage('markAsRead')
@@ -104,35 +89,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const userId = client.data?.userId;
     if (!userId) return;
     await this.chatService.markAsRead(userId, data.senderId);
-    const senderSocketId = this.connectedUsers.get(data.senderId);
-    if (senderSocketId) {
-      this.server.to(senderSocketId).emit('messagesRead', { by: userId });
-    }
-  }
-
-  @SubscribeMessage('startCall')
-  handleStartCall(@ConnectedSocket() client: Socket, @MessageBody() data: { receiverId: string; type: 'audio' | 'video' }) {
-    const callerId = client.data?.userId;
-    if (!callerId) return;
-    const receiverSocketId = this.connectedUsers.get(data.receiverId);
-    if (receiverSocketId) {
-      this.server.to(receiverSocketId).emit('incomingCall', { from: callerId, type: data.type });
-    }
-  }
-
-  private async canSendMessage(senderId: string, receiverId: string): Promise<boolean> {
-    try {
-      const status = await this.friendsService.checkBlockStatus(senderId, receiverId);
-      return status.canMessage;
-    } catch (error) {
-      return true; // Par défaut, autoriser si erreur
-    }
-  }
-
-  notifyUser(userId: string, event: string, data: any) {
-    const socketId = this.connectedUsers.get(userId);
-    if (socketId) {
-      this.server.to(socketId).emit(event, data);
-    }
+    const senderSocketIds = this.userSockets.get(data.senderId) || [];
+    senderSocketIds.forEach(sid => this.server.to(sid).emit('messagesRead', { by: userId }));
   }
 }
