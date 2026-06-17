@@ -17,116 +17,318 @@ export class FriendsService {
 
   async getFriends(userId: string): Promise<any[]> {
     const userObjectId = new Types.ObjectId(userId);
-    const friendships = await this.friendModel.find({ $or: [{ userId: userObjectId }, { friendId: userObjectId }], status: 'accepted' })
+    const friendships = await this.friendModel
+      .find({
+        $or: [{ userId: userObjectId }, { friendId: userObjectId }],
+        status: 'accepted'
+      })
       .populate('userId', 'firstName lastName email phoneNumber profilePicture isOnline lastSeen')
-      .populate('friendId', 'firstName lastName email phoneNumber profilePicture isOnline lastSeen').exec();
-    return friendships.map(f => ({ id: f._id, userId: f.userId._id, friendId: f.friendId._id, status: f.status, friend: f.userId._id.toString() === userId ? f.friendId : f.userId }));
+      .populate('friendId', 'firstName lastName email phoneNumber profilePicture isOnline lastSeen')
+      .exec();
+    
+    return friendships.map(f => ({
+      id: f._id,
+      userId: f.userId._id,
+      friendId: f.friendId._id,
+      status: f.status,
+      friend: f.userId._id.toString() === userId ? f.friendId : f.userId
+    }));
   }
 
   async getFriendRequests(userId: string): Promise<any[]> {
-    const requests = await this.friendModel.find({ friendId: new Types.ObjectId(userId), status: 'pending' }).populate('userId', 'firstName lastName email profilePicture').exec();
-    return requests.map(r => ({ id: r._id, senderId: r.userId._id, receiverId: r.friendId._id, status: r.status, sender: r.userId }));
+    const requests = await this.friendModel
+      .find({
+        friendId: new Types.ObjectId(userId),
+        status: 'pending'
+      })
+      .populate('userId', 'firstName lastName email profilePicture')
+      .exec();
+    
+    return requests.map(r => ({
+      id: r._id,
+      senderId: r.userId._id,
+      receiverId: r.friendId._id,
+      status: r.status,
+      sender: r.userId
+    }));
   }
 
   async sendFriendRequest(userId: string, friendId: string) {
-    if (userId === friendId) throw new BadRequestException('Vous ne pouvez pas vous ajouter vous-même');
-    const userObjectId = new Types.ObjectId(userId), friendObjectId = new Types.ObjectId(friendId);
+    if (userId === friendId) {
+      throw new BadRequestException('Vous ne pouvez pas vous ajouter vous-même');
+    }
+
+    const userObjectId = new Types.ObjectId(userId);
+    const friendObjectId = new Types.ObjectId(friendId);
+
     const friendExists = await this.userModel.findById(friendObjectId);
-    if (!friendExists) throw new NotFoundException('Utilisateur non trouvé');
-    let friendship = await this.friendModel.findOne({ $or: [{ userId: userObjectId, friendId: friendObjectId }, { userId: friendObjectId, friendId: userObjectId }] });
+    if (!friendExists) {
+      throw new NotFoundException('Utilisateur non trouvé');
+    }
+
+    let friendship = await this.friendModel.findOne({
+      $or: [
+        { userId: userObjectId, friendId: friendObjectId },
+        { userId: friendObjectId, friendId: userObjectId }
+      ]
+    });
+
     if (friendship) {
-      if (friendship.status === 'blocked') throw new ForbiddenException('Impossible d\'envoyer une demande à un utilisateur bloqué');
-      if (friendship.status === 'pending') throw new BadRequestException('Une demande est déjà en attente');
-      if (friendship.status === 'accepted') throw new BadRequestException('Vous êtes déjà amis');
+      if (friendship.status === 'blocked') {
+        throw new ForbiddenException('Impossible d\'envoyer une demande à un utilisateur bloqué');
+      }
+      if (friendship.status === 'pending') {
+        throw new BadRequestException('Une demande est déjà en attente');
+      }
+      if (friendship.status === 'accepted') {
+        throw new BadRequestException('Vous êtes déjà amis');
+      }
       if (friendship.status === 'deleted') {
         friendship.status = 'pending';
         friendship.deletedBy = undefined;
         await friendship.save();
-        this.chatGateway?.notifyUser(friendId, 'friendRequest', { from: userId, requestId: friendship._id });
-        return { message: 'Demande d\'ami renvoyée', success: true, requestId: friendship._id };
+        this.chatGateway?.notifyUser(friendId, 'friendRequest', {
+          from: userId,
+          requestId: friendship._id
+        });
+        return {
+          message: 'Demande d\'ami renvoyée',
+          success: true,
+          requestId: friendship._id
+        };
       }
     } else {
-      friendship = new this.friendModel({ userId: userObjectId, friendId: friendObjectId, status: 'pending' });
+      friendship = new this.friendModel({
+        userId: userObjectId,
+        friendId: friendObjectId,
+        status: 'pending'
+      });
       await friendship.save();
     }
-    this.chatGateway?.notifyUser(friendId, 'friendRequest', { from: userId, requestId: friendship._id });
-    return { message: 'Demande d\'ami envoyée', success: true, requestId: friendship._id };
+
+    this.chatGateway?.notifyUser(friendId, 'friendRequest', {
+      from: userId,
+      requestId: friendship._id
+    });
+
+    return {
+      message: 'Demande d\'ami envoyée',
+      success: true,
+      requestId: friendship._id
+    };
   }
 
   async acceptFriendRequest(userId: string, requestId: string) {
     const request = await this.friendModel.findById(requestId);
-    if (!request) throw new NotFoundException('Demande non trouvée');
-    if (request.friendId.toString() !== userId) throw new ForbiddenException('Non autorisé');
-    if (request.status !== 'pending') throw new BadRequestException('Demande déjà traitée');
+    if (!request) {
+      throw new NotFoundException('Demande non trouvée');
+    }
+    if (request.friendId.toString() !== userId) {
+      throw new ForbiddenException('Non autorisé');
+    }
+    if (request.status !== 'pending') {
+      throw new BadRequestException('Demande déjà traitée');
+    }
+
     request.status = 'accepted';
     await request.save();
+
     let conversation;
     try {
-      conversation = await this.conversationsService.createConversation([request.userId.toString(), request.friendId.toString()]);
-      if (conversation) await this.conversationsService.sendMessage(conversation._id.toString(), 'system', '👋 Vous êtes maintenant amis ! Commencez à discuter.', 'text');
-    } catch (e) { console.error(e); }
-    this.chatGateway?.notifyUser(request.userId.toString(), 'friendRequestAccepted', { by: userId, conversationId: conversation?._id });
-    return { message: 'Demande d\'ami acceptée', conversationId: conversation?._id, success: true };
+      conversation = await this.conversationsService.createConversation([
+        request.userId.toString(),
+        request.friendId.toString()
+      ]);
+      if (conversation) {
+        await this.conversationsService.sendMessage(
+          conversation._id.toString(),
+          'system',
+          '👋 Vous êtes maintenant amis ! Commencez à discuter.',
+          'text'
+        );
+      }
+    } catch (e) {
+      console.error('Erreur création conversation:', e);
+    }
+
+    this.chatGateway?.notifyUser(request.userId.toString(), 'friendRequestAccepted', {
+      by: userId,
+      conversationId: conversation?._id
+    });
+
+    return {
+      message: 'Demande d\'ami acceptée',
+      conversationId: conversation?._id,
+      success: true
+    };
   }
 
   async declineFriendRequest(userId: string, requestId: string) {
     const request = await this.friendModel.findById(requestId);
-    if (!request) throw new NotFoundException('Demande non trouvée');
-    if (request.friendId.toString() !== userId) throw new ForbiddenException('Non autorisé');
-    if (request.status !== 'pending') throw new BadRequestException('Demande déjà traitée');
+    if (!request) {
+      throw new NotFoundException('Demande non trouvée');
+    }
+    if (request.friendId.toString() !== userId) {
+      throw new ForbiddenException('Non autorisé');
+    }
+    if (request.status !== 'pending') {
+      throw new BadRequestException('Demande déjà traitée');
+    }
+
     await request.deleteOne();
-    this.chatGateway?.notifyUser(request.userId.toString(), 'friendRequestDeclined', { by: userId });
-    return { message: 'Demande d\'ami refusée', success: true };
+    this.chatGateway?.notifyUser(request.userId.toString(), 'friendRequestDeclined', {
+      by: userId
+    });
+
+    return {
+      message: 'Demande d\'ami refusée',
+      success: true
+    };
   }
 
   async removeFriend(userId: string, friendId: string) {
-    const friendship = await this.friendModel.findOne({ $or: [{ userId, friendId }, { userId: friendId, friendId: userId }], status: 'accepted' });
-    if (!friendship) throw new NotFoundException('Relation d\'amitié non trouvée');
+    const friendship = await this.friendModel.findOne({
+      $or: [
+        { userId: userId, friendId: friendId },
+        { userId: friendId, friendId: userId }
+      ],
+      status: 'accepted'
+    });
+
+    if (!friendship) {
+      throw new NotFoundException('Relation d\'amitié non trouvée');
+    }
+
     friendship.status = 'deleted';
     friendship.deletedBy = new Types.ObjectId(userId);
     await friendship.save();
-    const otherUserId = friendship.userId.toString() === userId ? friendship.friendId.toString() : friendship.userId.toString();
+
+    const otherUserId = friendship.userId.toString() === userId
+      ? friendship.friendId.toString()
+      : friendship.userId.toString();
+
     this.chatGateway?.notifyUser(otherUserId, 'friendRemoved', { by: userId });
-    return { message: 'Ami supprimé', success: true };
+
+    return {
+      message: 'Ami supprimé',
+      success: true
+    };
   }
 
   async blockUser(userId: string, userToBlockId: string) {
-    if (userId === userToBlockId) throw new BadRequestException('Vous ne pouvez pas vous bloquer vous-même');
-    const userObjectId = new Types.ObjectId(userId), blockObjectId = new Types.ObjectId(userToBlockId);
-    let friendship = await this.friendModel.findOne({ $or: [{ userId: userObjectId, friendId: blockObjectId }, { userId: blockObjectId, friendId: userObjectId }] });
+    if (userId === userToBlockId) {
+      throw new BadRequestException('Vous ne pouvez pas vous bloquer vous-même');
+    }
+
+    const userObjectId = new Types.ObjectId(userId);
+    const blockObjectId = new Types.ObjectId(userToBlockId);
+
+    let friendship = await this.friendModel.findOne({
+      $or: [
+        { userId: userObjectId, friendId: blockObjectId },
+        { userId: blockObjectId, friendId: userObjectId }
+      ]
+    });
+
     if (friendship) {
       friendship.status = 'blocked';
       friendship.blockedBy = userObjectId;
       await friendship.save();
     } else {
-      friendship = new this.friendModel({ userId: userObjectId, friendId: blockObjectId, status: 'blocked', blockedBy: userObjectId });
+      friendship = new this.friendModel({
+        userId: userObjectId,
+        friendId: blockObjectId,
+        status: 'blocked',
+        blockedBy: userObjectId
+      });
       await friendship.save();
     }
+
     this.chatGateway?.notifyUser(userToBlockId, 'userBlocked', { by: userId });
-    return { message: 'Utilisateur bloqué', success: true };
+
+    return {
+      message: 'Utilisateur bloqué',
+      success: true
+    };
   }
 
   async unblockUser(userId: string, userToUnblockId: string) {
-    const friendship = await this.friendModel.findOne({ $or: [{ userId, friendId: userToUnblockId, status: 'blocked', blockedBy: userId }, { userId: userToUnblockId, friendId: userId, status: 'blocked', blockedBy: userId }] });
-    if (!friendship) throw new NotFoundException('Relation bloquée non trouvée');
+    const friendship = await this.friendModel.findOne({
+      $or: [
+        { userId: userId, friendId: userToUnblockId, status: 'blocked', blockedBy: userId },
+        { userId: userToUnblockId, friendId: userId, status: 'blocked', blockedBy: userId }
+      ]
+    });
+
+    if (!friendship) {
+      throw new NotFoundException('Relation bloquée non trouvée');
+    }
+
     await friendship.deleteOne();
     this.chatGateway?.notifyUser(userToUnblockId, 'userUnblocked', { by: userId });
-    return { message: 'Utilisateur débloqué', success: true };
+
+    return {
+      message: 'Utilisateur débloqué',
+      success: true
+    };
   }
 
   async checkBlockStatus(userId: string, otherUserId: string) {
-    const friendship = await this.friendModel.findOne({ $or: [{ userId, friendId: otherUserId }, { userId: otherUserId, friendId: userId }] });
-    if (!friendship) return { isBlocked: false, canMessage: true };
+    const friendship = await this.friendModel.findOne({
+      $or: [
+        { userId: userId, friendId: otherUserId },
+        { userId: otherUserId, friendId: userId }
+      ]
+    });
+
+    if (!friendship) {
+      return { isBlocked: false, canMessage: true };
+    }
+
     const isBlocked = friendship.status === 'blocked';
-    return { isBlocked, blockedBy: friendship.blockedBy?.toString(), canMessage: !isBlocked };
+    return {
+      isBlocked,
+      blockedBy: friendship.blockedBy?.toString(),
+      canMessage: !isBlocked
+    };
   }
 
   async searchUsers(query: string, currentUserId: string) {
-    const users = await this.userModel.find({ $or: [{ firstName: { $regex: query, $options: 'i' } }, { lastName: { $regex: query, $options: 'i' } }, { email: { $regex: query, $options: 'i' } }], _id: { $ne: new Types.ObjectId(currentUserId) } }).limit(10).select('firstName lastName email phoneNumber profilePicture').lean();
+    const users = await this.userModel
+      .find({
+        $or: [
+          { firstName: { $regex: query, $options: 'i' } },
+          { lastName: { $regex: query, $options: 'i' } },
+          { email: { $regex: query, $options: 'i' } }
+        ],
+        _id: { $ne: new Types.ObjectId(currentUserId) }
+      })
+      .limit(10)
+      .select('firstName lastName email phoneNumber profilePicture')
+      .lean();
+
     const currentUserObjectId = new Types.ObjectId(currentUserId);
+
     return Promise.all(users.map(async (user) => {
-      const friendship = await this.friendModel.findOne({ $or: [{ userId: currentUserObjectId, friendId: user._id }, { userId: user._id, friendId: currentUserObjectId }] });
-      return { id: user._id, firstName: user.firstName, lastName: user.lastName, email: user.email, phoneNumber: user.phoneNumber, profilePicture: user.profilePicture, isFriend: friendship?.status === 'accepted', hasPendingRequest: friendship?.status === 'pending', isBlocked: friendship?.status === 'blocked', blockedBy: friendship?.blockedBy?.toString() };
+      const friendship = await this.friendModel.findOne({
+        $or: [
+          { userId: currentUserObjectId, friendId: user._id },
+          { userId: user._id, friendId: currentUserObjectId }
+        ]
+      });
+
+      return {
+        id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        phoneNumber: user.phoneNumber,
+        profilePicture: user.profilePicture,
+        isFriend: friendship?.status === 'accepted',
+        hasPendingRequest: friendship?.status === 'pending',
+        isBlocked: friendship?.status === 'blocked',
+        blockedBy: friendship?.blockedBy?.toString()
+      };
     }));
   }
 
@@ -190,14 +392,16 @@ export class FriendsService {
     }));
   }
 
-  // ✅ Méthode ajoutée à l'intérieur de la classe
   async findUsersByPhones(phones: string[], currentUserId: string): Promise<any[]> {
     const cleanPhones = phones.map(p => p.replace(/\s/g, '').replace(/[^0-9]/g, ''));
-    const users = await this.userModel.find({
-      phoneNumber: { $in: cleanPhones },
-      _id: { $ne: new Types.ObjectId(currentUserId) },
-      isActive: true
-    }).select('firstName lastName email phoneNumber profilePicture isOnline lastSeen').lean();
+    const users = await this.userModel
+      .find({
+        phoneNumber: { $in: cleanPhones },
+        _id: { $ne: new Types.ObjectId(currentUserId) },
+        isActive: true
+      })
+      .select('firstName lastName email phoneNumber profilePicture isOnline lastSeen')
+      .lean();
 
     const existingFriends = await this.friendModel.find({
       $or: [{ userId: currentUserId }, { friendId: currentUserId }],

@@ -1,3 +1,4 @@
+// backend/src/app.controller.ts
 import { Controller, Get } from '@nestjs/common';
 import { AppService } from './app.service';
 
@@ -15,7 +16,18 @@ export class AppController {
     return { 
       status: 'ok', 
       timestamp: new Date().toISOString(),
-      version: '1.0.0'
+      version: '1.0.0',
+      cors: 'enabled'
+    };
+  }
+
+  @Get('test-cors')
+  testCors() {
+    return { 
+      message: 'CORS est fonctionnel !',
+      headers: {
+        'Access-Control-Allow-Origin': '*'
+      }
     };
   }
 }
