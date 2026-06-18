@@ -56,10 +56,20 @@ export class User {
   @Prop({ default: '' })
   bio: string;
 
+  @Prop()
+  birthday: Date;
+
+  @Prop()
+  gender: string;
+
   @Prop({ type: Object, default: {} })
   settings: Record<string, any>;
 
+  // ✅ Ajout explicite des champs timestamps pour TypeScript
+  @Prop()
   createdAt?: Date;
+
+  @Prop()
   updatedAt?: Date;
 }
 

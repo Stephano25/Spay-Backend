@@ -52,10 +52,16 @@ export class Wallet {
     autoSave: boolean;
     notificationThreshold: number;
   };
+
+  // ✅ Ajout explicite des champs timestamps pour TypeScript
+  @Prop()
+  createdAt?: Date;
+
+  @Prop()
+  updatedAt?: Date;
 }
 
 export const WalletSchema = SchemaFactory.createForClass(Wallet);
 
-// Index pour les performances
 WalletSchema.index({ userId: 1 });
 WalletSchema.index({ balance: -1 });
