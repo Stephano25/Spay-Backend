@@ -27,7 +27,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private userSockets = new Map<string, string[]>();
 
   constructor(
-    private chatService: ChatService,
+    // ⚠️ forwardRef nécessaire car ChatService dépend maintenant aussi
+    // de ChatGateway (pour notifier l'autre utilisateur lors d'une
+    // modification / suppression / réaction sur un message via REST).
+    @Inject(forwardRef(() => ChatService)) private chatService: ChatService,
     @Inject(forwardRef(() => FriendsService)) private friendsService: FriendsService,
     private jwtService: JwtService,
     private configService: ConfigService,
@@ -123,6 +126,11 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
+    if (senderId === data.receiverId) {
+      client.emit('error', { message: 'Vous ne pouvez pas vous envoyer de message à vous-même' });
+      return;
+    }
+
     const canSend = await this.friendsService.checkBlockStatus(senderId, data.receiverId);
     if (!canSend.canMessage) {
       client.emit('messageBlocked', {
@@ -147,13 +155,26 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       this.server.to(`user_${data.receiverId}`).emit('conversationUpdated', {
         userId: senderId,
-        lastMessage: message.content || (message.type === 'emoji' ? message.emoji : '[Média]'),
+        lastMessage: this.getLastMessagePreview(message),
         lastMessageTime: message.createdAt,
       });
     } catch (error) {
       console.error('Erreur lors de l\'envoi du message:', error);
       client.emit('error', { message: 'Erreur lors de l\'envoi du message' });
     }
+  }
+
+  private getLastMessagePreview(message: any): string {
+    if (message.type === 'emoji') return message.emoji;
+    if (message.type === 'money') {
+      const status = message.moneyTransfer?.status;
+      const amount = message.moneyTransfer?.amount ?? 0;
+      if (status === 'failed') return `💸 Transfert échoué (${amount} Ar)`;
+      return `💸 Transfert de ${amount} Ar`;
+    }
+    if (message.type === 'image') return '📷 Photo';
+    if (message.type === 'file') return `📎 ${message.fileName || 'Fichier'}`;
+    return message.content || '[Média]';
   }
 
   @SubscribeMessage('typing')

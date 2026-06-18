@@ -1,4 +1,17 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards, Req, UseInterceptors, UploadedFile, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Body,
+  Param,
+  UseGuards,
+  Req,
+  UseInterceptors,
+  UploadedFile,
+  Query,
+} from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ChatService } from './chat.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -19,10 +32,10 @@ export class ChatController {
 
   @Get('messages/:userId')
   async getMessages(
-    @Req() req, 
+    @Req() req,
     @Param('userId') otherUserId: string,
     @Query('page') page: string = '1',
-    @Query('limit') limit: string = '20'
+    @Query('limit') limit: string = '20',
   ) {
     const userId = req.user.userId;
     const pageNum = parseInt(page);
@@ -47,35 +60,57 @@ export class ChatController {
   async updateMessage(
     @Req() req,
     @Param('messageId') messageId: string,
-    @Body('content') content: string
+    @Body('content') content: string,
   ) {
     const userId = req.user.userId;
     return this.chatService.updateMessage(messageId, userId, content);
   }
 
+  // ⚠️ CORRECTION : on renvoie maintenant le message mis à jour
+  // (isDeleted: true, content vide) plutôt qu'un simple {success}.
+  // Cela permet au front d'afficher un placeholder "Message supprimé"
+  // à la bonne place dans la conversation, comme sur Messenger,
+  // au lieu de faire disparaître la bulle.
   @Delete('message/:messageId')
   async deleteMessage(@Req() req, @Param('messageId') messageId: string) {
     const userId = req.user.userId;
-    await this.chatService.deleteMessage(messageId, userId);
-    return { success: true, message: 'Message supprimé avec succès' };
+    return this.chatService.deleteMessage(messageId, userId);
+  }
+
+  @Post('message/:messageId/react')
+  async reactToMessage(
+    @Req() req,
+    @Param('messageId') messageId: string,
+    @Body('emoji') emoji: string,
+  ) {
+    const userId = req.user.userId;
+    return this.chatService.reactToMessage(messageId, userId, emoji);
+  }
+
+  @Delete('message/:messageId/react')
+  async removeReaction(@Req() req, @Param('messageId') messageId: string) {
+    const userId = req.user.userId;
+    return this.chatService.removeReaction(messageId, userId);
   }
 
   @Post('upload')
-  @UseInterceptors(FileInterceptor('file', {
-    storage: diskStorage({
-      destination: './uploads',
-      filename: (req, file, cb) => {
-        const randomName = Array(32)
-          .fill(null)
-          .map(() => Math.round(Math.random() * 16).toString(16))
-          .join('');
-        cb(null, `${randomName}${extname(file.originalname)}`);
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: './uploads',
+        filename: (req, file, cb) => {
+          const randomName = Array(32)
+            .fill(null)
+            .map(() => Math.round(Math.random() * 16).toString(16))
+            .join('');
+          cb(null, `${randomName}${extname(file.originalname)}`);
+        },
+      }),
+      limits: {
+        fileSize: 150 * 1024 * 1024,
       },
     }),
-    limits: {
-      fileSize: 150 * 1024 * 1024,
-    },
-  }))
+  )
   async uploadFile(@UploadedFile() file: Express.Multer.File) {
     return this.chatService.uploadFile(file);
   }

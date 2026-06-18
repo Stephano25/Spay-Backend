@@ -8,12 +8,13 @@ import { ChatGateway } from './chat.gateway';
 import { Message, MessageSchema } from './schemas/message.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { FriendsModule } from '../friends/friends.module';
+import { TransactionsModule } from '../transactions/transactions.module';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Message.name, schema: MessageSchema },
-      { name: User.name, schema: UserSchema }
+      { name: User.name, schema: UserSchema },
     ]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -23,7 +24,8 @@ import { FriendsModule } from '../friends/friends.module';
       }),
       inject: [ConfigService],
     }),
-    forwardRef(() => FriendsModule), // Utiliser forwardRef pour résoudre la dépendance circulaire
+    forwardRef(() => FriendsModule), // dépendance circulaire avec FriendsModule
+    TransactionsModule, // permet à ChatService d'exécuter un vrai transfert d'argent
   ],
   controllers: [ChatController],
   providers: [ChatService, ChatGateway],

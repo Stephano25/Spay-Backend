@@ -11,6 +11,10 @@ export class SendMessageDto {
   };
 }
 
+export class ReactToMessageDto {
+  emoji: string;
+}
+
 export class MessageResponseDto {
   id: string;
   senderId: string;
@@ -23,12 +27,17 @@ export class MessageResponseDto {
   emoji?: string;
   isRead: boolean;
   isDelivered: boolean;
+  isEdited?: boolean;
+  editedAt?: Date;
+  isDeleted?: boolean;
   createdAt: Date;
   moneyTransfer?: {
     amount: number;
     status: string;
     transactionId?: string;
+    failReason?: string;
   };
+  reactions?: { userId: string; emoji: string }[];
   sender?: {
     id: string;
     firstName: string;

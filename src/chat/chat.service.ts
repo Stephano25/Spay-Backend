@@ -1,10 +1,12 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { JwtService } from '@nestjs/jwt';
 import { Message, MessageDocument } from './schemas/message.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { SendMessageDto, MessageResponseDto } from './dto/message.dto';
+import { TransactionsService } from '../transactions/transactions.service';
+import { ChatGateway } from './chat.gateway';
 
 @Injectable()
 export class ChatService {
@@ -12,13 +14,32 @@ export class ChatService {
     @InjectModel(Message.name) private messageModel: Model<MessageDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     private jwtService: JwtService,
+    private transactionsService: TransactionsService,
+    @Inject(forwardRef(() => ChatGateway)) private chatGateway: ChatGateway,
   ) {}
 
+  // ============================================================
+  // ENVOI DE MESSAGE (texte, image, fichier, emoji, argent)
+  // ============================================================
   async saveMessage(messageData: any): Promise<MessageResponseDto> {
     try {
       const senderObjectId = new Types.ObjectId(messageData.senderId);
       const receiverObjectId = new Types.ObjectId(messageData.receiverId);
-      
+
+      let moneyTransfer: any = undefined;
+
+      // ⚠️ CORRECTION IMPORTANTE :
+      // Avant, un message de type "money" créait juste une bulle avec
+      // status "pending" sans jamais déplacer le moindre Ariary.
+      // On exécute maintenant le vrai transfert via TransactionsService.
+      if (messageData.type === 'money' && messageData.moneyTransfer?.amount) {
+        moneyTransfer = await this.processMoneyTransfer(
+          messageData.senderId,
+          messageData.receiverId,
+          messageData.moneyTransfer.amount,
+        );
+      }
+
       const message = new this.messageModel({
         senderId: senderObjectId,
         receiverId: receiverObjectId,
@@ -28,12 +49,7 @@ export class ChatService {
         fileName: messageData.fileName,
         fileSize: messageData.fileSize,
         emoji: messageData.emoji,
-        moneyTransfer: messageData.moneyTransfer
-          ? {
-              amount: messageData.moneyTransfer.amount,
-              status: 'pending',
-            }
-          : undefined,
+        moneyTransfer,
         isRead: false,
         isDelivered: false,
       });
@@ -41,33 +57,51 @@ export class ChatService {
       await message.save();
       await message.populate('senderId', 'firstName lastName profilePicture');
 
-      const populated = message as any;
-      return {
-        id: populated._id.toString(),
-        senderId: populated.senderId._id.toString(),
-        receiverId: populated.receiverId.toString(),
-        type: populated.type,
-        content: populated.content,
-        fileUrl: populated.fileUrl,
-        fileName: populated.fileName,
-        fileSize: populated.fileSize,
-        emoji: populated.emoji,
-        isRead: populated.isRead,
-        isDelivered: populated.isDelivered,
-        createdAt: populated.createdAt,
-        moneyTransfer: populated.moneyTransfer,
-        sender: {
-          id: populated.senderId._id.toString(),
-          firstName: populated.senderId.firstName,
-          lastName: populated.senderId.lastName,
-          profilePicture: populated.senderId.profilePicture,
-        },
-      };
+      return this.toResponseDto(message);
     } catch (error) {
       throw new BadRequestException('Erreur lors de la sauvegarde du message');
     }
   }
 
+  /**
+   * Exécute réellement le virement entre les deux utilisateurs.
+   * Ne lève jamais d'exception : en cas d'échec (solde insuffisant,
+   * destinataire invalide, montant incorrect...), on renvoie un statut
+   * "failed" avec la raison, pour que le message s'affiche quand même
+   * dans la conversation (comme une tentative de paiement échouée).
+   */
+  private async processMoneyTransfer(senderId: string, receiverId: string, amount: number) {
+    try {
+      if (senderId === receiverId) {
+        throw new Error("Vous ne pouvez pas vous envoyer de l'argent à vous-même");
+      }
+      if (!amount || amount <= 0) {
+        throw new Error('Montant invalide');
+      }
+
+      const transaction: any = await this.transactionsService.sendMoney(senderId, {
+        receiverId,
+        amount,
+        description: 'Transfert via messagerie',
+      });
+
+      return {
+        amount,
+        status: 'completed',
+        transactionId: transaction?._id?.toString() || transaction?.id,
+      };
+    } catch (error: any) {
+      return {
+        amount,
+        status: 'failed',
+        failReason: error?.message || 'Erreur lors du transfert',
+      };
+    }
+  }
+
+  // ============================================================
+  // CONVERSATIONS
+  // ============================================================
   async getConversations(userId: string): Promise<any[]> {
     const userObjectId = new Types.ObjectId(userId);
 
@@ -122,7 +156,13 @@ export class ChatService {
           lastName: '$otherUser.lastName',
           profilePicture: '$otherUser.profilePicture',
           lastMessage: {
-            content: { $ifNull: ['$lastMessage.content', ''] },
+            content: {
+              $cond: [
+                '$lastMessage.isDeleted',
+                'Message supprimé',
+                { $ifNull: ['$lastMessage.content', ''] },
+              ],
+            },
             type: '$lastMessage.type',
             createdAt: '$lastMessage.createdAt',
           },
@@ -154,32 +194,9 @@ export class ChatService {
       })
       .sort({ createdAt: 1 })
       .populate('senderId', 'firstName lastName profilePicture')
-      .lean()
       .exec();
 
-    return (messages as any[]).map((msg) => ({
-      id: msg._id.toString(),
-      senderId: msg.senderId?._id?.toString() || msg.senderId?.toString(),
-      receiverId: msg.receiverId?.toString(),
-      type: msg.type,
-      content: msg.content,
-      fileUrl: msg.fileUrl,
-      fileName: msg.fileName,
-      fileSize: msg.fileSize,
-      emoji: msg.emoji,
-      isRead: msg.isRead,
-      isDelivered: msg.isDelivered,
-      createdAt: msg.createdAt,
-      moneyTransfer: msg.moneyTransfer,
-      sender: msg.senderId
-        ? {
-            id: msg.senderId._id?.toString() || msg.senderId.toString(),
-            firstName: msg.senderId.firstName || 'Utilisateur',
-            lastName: msg.senderId.lastName || '',
-            profilePicture: msg.senderId.profilePicture,
-          }
-        : undefined,
-    }));
+    return messages.map((msg) => this.toResponseDto(msg));
   }
 
   async getMessagesPaginated(
@@ -207,37 +224,14 @@ export class ChatService {
       .skip(skip)
       .limit(limit)
       .populate('senderId', 'firstName lastName profilePicture')
-      .lean()
       .exec();
 
-    return (messages as any[]).reverse().map((msg) => ({
-      id: msg._id.toString(),
-      senderId: msg.senderId?._id?.toString() || msg.senderId?.toString(),
-      receiverId: msg.receiverId?.toString(),
-      type: msg.type,
-      content: msg.content,
-      fileUrl: msg.fileUrl,
-      fileName: msg.fileName,
-      fileSize: msg.fileSize,
-      emoji: msg.emoji,
-      isRead: msg.isRead,
-      isDelivered: msg.isDelivered,
-      createdAt: msg.createdAt,
-      moneyTransfer: msg.moneyTransfer,
-      sender: msg.senderId
-        ? {
-            id: msg.senderId._id?.toString() || msg.senderId.toString(),
-            firstName: msg.senderId.firstName || 'Utilisateur',
-            lastName: msg.senderId.lastName || '',
-            profilePicture: msg.senderId.profilePicture,
-          }
-        : undefined,
-    }));
+    return messages.reverse().map((msg) => this.toResponseDto(msg));
   }
 
   async markAsRead(userId: string, senderId: string): Promise<void> {
     if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(senderId)) return;
-    
+
     await this.messageModel.updateMany(
       {
         senderId: new Types.ObjectId(senderId),
@@ -260,15 +254,31 @@ export class ChatService {
     };
   }
 
-  async deleteMessage(messageId: string, userId: string): Promise<void> {
+  // ============================================================
+  // SUPPRESSION (soft delete -> placeholder "Message supprimé")
+  // ============================================================
+  async deleteMessage(messageId: string, userId: string): Promise<MessageResponseDto> {
     const message = await this.messageModel.findById(messageId);
     if (!message) throw new NotFoundException('Message non trouvé');
     if (message.senderId.toString() !== userId) {
       throw new BadRequestException('Vous ne pouvez supprimer que vos propres messages');
     }
-    await message.deleteOne();
+
+    message.isDeleted = true;
+    message.deletedAt = new Date();
+    message.content = '';
+    message.fileUrl = undefined as any;
+    await message.save();
+    await message.populate('senderId', 'firstName lastName profilePicture');
+
+    const dto = this.toResponseDto(message);
+    this.chatGateway?.notifyUser(message.receiverId.toString(), 'messageDeleted', { messageId });
+    return dto;
   }
 
+  // ============================================================
+  // MODIFICATION (messages texte uniquement)
+  // ============================================================
   async updateMessage(messageId: string, userId: string, content: string): Promise<MessageResponseDto> {
     const message = await this.messageModel.findById(messageId);
     if (!message) throw new NotFoundException('Message non trouvé');
@@ -278,32 +288,96 @@ export class ChatService {
     if (message.type !== 'text') {
       throw new BadRequestException('Seuls les messages texte peuvent être modifiés');
     }
-    
-    message.content = content;
+    if (message.isDeleted) {
+      throw new BadRequestException('Ce message a été supprimé');
+    }
+    if (!content || !content.trim()) {
+      throw new BadRequestException('Le message ne peut pas être vide');
+    }
+
+    message.content = content.trim();
+    message.isEdited = true;
+    message.editedAt = new Date();
     await message.save();
     await message.populate('senderId', 'firstName lastName profilePicture');
 
-    const populated = message as any;
+    const dto = this.toResponseDto(message);
+    this.chatGateway?.notifyUser(message.receiverId.toString(), 'messageEdited', dto);
+    return dto;
+  }
+
+  // ============================================================
+  // RÉACTIONS (1 réaction par utilisateur, la dernière remplace l'ancienne)
+  // ============================================================
+  async reactToMessage(messageId: string, userId: string, emoji: string): Promise<MessageResponseDto> {
+    if (!emoji) throw new BadRequestException('Emoji requis');
+
+    const message = await this.messageModel.findById(messageId);
+    if (!message) throw new NotFoundException('Message non trouvé');
+
+    const userObjectId = new Types.ObjectId(userId);
+    message.reactions = (message.reactions || []).filter((r) => r.userId.toString() !== userId);
+    message.reactions.push({ userId: userObjectId, emoji });
+    await message.save();
+    await message.populate('senderId', 'firstName lastName profilePicture');
+
+    const dto = this.toResponseDto(message);
+    const otherUserId =
+      message.senderId.toString() === userId ? message.receiverId.toString() : message.senderId.toString();
+    this.chatGateway?.notifyUser(otherUserId, 'messageReaction', dto);
+    return dto;
+  }
+
+  async removeReaction(messageId: string, userId: string): Promise<MessageResponseDto> {
+    const message = await this.messageModel.findById(messageId);
+    if (!message) throw new NotFoundException('Message non trouvé');
+
+    message.reactions = (message.reactions || []).filter((r) => r.userId.toString() !== userId);
+    await message.save();
+    await message.populate('senderId', 'firstName lastName profilePicture');
+
+    const dto = this.toResponseDto(message);
+    const otherUserId =
+      message.senderId.toString() === userId ? message.receiverId.toString() : message.senderId.toString();
+    this.chatGateway?.notifyUser(otherUserId, 'messageReaction', dto);
+    return dto;
+  }
+
+  // ============================================================
+  // Helper de mapping
+  // ============================================================
+  private toResponseDto(message: any): MessageResponseDto {
+    const senderPopulated = message.senderId && message.senderId.firstName !== undefined;
+
     return {
-      id: populated._id.toString(),
-      senderId: populated.senderId._id.toString(),
-      receiverId: populated.receiverId.toString(),
-      type: populated.type,
-      content: populated.content,
-      fileUrl: populated.fileUrl,
-      fileName: populated.fileName,
-      fileSize: populated.fileSize,
-      emoji: populated.emoji,
-      isRead: populated.isRead,
-      isDelivered: populated.isDelivered,
-      createdAt: populated.createdAt,
-      moneyTransfer: populated.moneyTransfer,
-      sender: {
-        id: populated.senderId._id.toString(),
-        firstName: populated.senderId.firstName,
-        lastName: populated.senderId.lastName,
-        profilePicture: populated.senderId.profilePicture,
-      },
+      id: message._id.toString(),
+      senderId: senderPopulated ? message.senderId._id.toString() : message.senderId.toString(),
+      receiverId: message.receiverId.toString(),
+      type: message.type,
+      content: message.isDeleted ? '' : message.content,
+      fileUrl: message.isDeleted ? undefined : message.fileUrl,
+      fileName: message.fileName,
+      fileSize: message.fileSize,
+      emoji: message.emoji,
+      isRead: message.isRead,
+      isDelivered: message.isDelivered,
+      isEdited: message.isEdited,
+      editedAt: message.editedAt,
+      isDeleted: message.isDeleted,
+      createdAt: message.createdAt,
+      moneyTransfer: message.moneyTransfer,
+      reactions: (message.reactions || []).map((r: any) => ({
+        userId: r.userId.toString(),
+        emoji: r.emoji,
+      })),
+      sender: senderPopulated
+        ? {
+            id: message.senderId._id.toString(),
+            firstName: message.senderId.firstName,
+            lastName: message.senderId.lastName,
+            profilePicture: message.senderId.profilePicture,
+          }
+        : undefined,
     };
   }
 }
