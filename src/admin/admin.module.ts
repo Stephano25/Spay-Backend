@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
@@ -6,6 +6,7 @@ import { User, UserSchema } from '../users/schemas/user.schema';
 import { Transaction, TransactionSchema } from '../transactions/schemas/transaction.schema';
 import { Setting, SettingSchema } from '../settings/schemas/setting.schema';
 import { Log, LogSchema } from '../logs/schemas/log.schema';
+import { ChatModule } from '../chat/chat.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { Log, LogSchema } from '../logs/schemas/log.schema';
       { name: Setting.name, schema: SettingSchema },
       { name: Log.name, schema: LogSchema },
     ]),
+    forwardRef(() => ChatModule), // Évite la dépendance circulaire
   ],
   controllers: [AdminController],
   providers: [AdminService],

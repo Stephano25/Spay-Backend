@@ -1,10 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { User, UserDocument, UserRole } from '../users/schemas/user.schema';
 import { Transaction, TransactionDocument, TransactionStatus } from '../transactions/schemas/transaction.schema';
 import { Setting, SettingDocument } from '../settings/schemas/setting.schema';
 import { Log, LogDocument } from '../logs/schemas/log.schema';
+import { ChatGateway } from '../chat/chat.gateway';
 
 @Injectable()
 export class AdminService {
@@ -13,17 +14,23 @@ export class AdminService {
     @InjectModel(Transaction.name) private transactionModel: Model<TransactionDocument>,
     @InjectModel(Setting.name) private settingModel: Model<SettingDocument>,
     @InjectModel(Log.name) private logModel: Model<LogDocument>,
+    @Inject(forwardRef(() => ChatGateway)) private chatGateway: ChatGateway,
   ) {}
 
   // ============================================================
   // DASHBOARD
   // ============================================================
   async getDashboardStats() {
-    const [totalUsers, activeUsers, totalTransactions] = await Promise.all([
+    const [totalUsers, totalTransactions] = await Promise.all([
       this.userModel.countDocuments(),
-      this.userModel.countDocuments({ isActive: true }),
       this.transactionModel.countDocuments(),
     ]);
+
+    // 🔥 Utilisateurs connectés en temps réel via WebSocket
+    const onlineUserIds = this.chatGateway.getOnlineUsers();
+    const activeUsers = onlineUserIds.length;
+
+    console.log(`📊 Utilisateurs en ligne : ${activeUsers} (${onlineUserIds.join(', ')})`);
 
     const volumeResult = await this.transactionModel.aggregate([
       { $match: { status: TransactionStatus.COMPLETED } },
@@ -175,7 +182,6 @@ export class AdminService {
   async getSettings() {
     let settings = await this.settingModel.findOne();
     if (!settings) {
-      // Crée les paramètres par défaut si aucun document n'existe
       settings = await this.settingModel.create({
         general: {
           siteName: 'SPaye',
@@ -262,7 +268,6 @@ export class AdminService {
   }
 
   async clearCache() {
-    // Dans une vraie application : vider Redis/Memcached. Ici on logge l'action.
     await this.logModel.create({
       level: 'info',
       message: 'Cache système vidé par un administrateur',

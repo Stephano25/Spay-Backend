@@ -23,13 +23,10 @@ import { ConfigService } from '@nestjs/config';
 })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer() server: Server;
-  private connectedUsers = new Map<string, string>();
-  private userSockets = new Map<string, string[]>();
+  private connectedUsers = new Map<string, string>(); // userId -> socketId
+  private userSockets = new Map<string, string[]>(); // userId -> socketIds[]
 
   constructor(
-    // ⚠️ forwardRef nécessaire car ChatService dépend maintenant aussi
-    // de ChatGateway (pour notifier l'autre utilisateur lors d'une
-    // modification / suppression / réaction sur un message via REST).
     @Inject(forwardRef(() => ChatService)) private chatService: ChatService,
     @Inject(forwardRef(() => FriendsService)) private friendsService: FriendsService,
     private jwtService: JwtService,
@@ -254,5 +251,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.server.to(socketId).emit(event, data);
       });
     }
+  }
+
+  /** 🔥 Récupère la liste des userId actuellement connectés (pour AdminService) */
+  getOnlineUsers(): string[] {
+    return Array.from(this.connectedUsers.keys());
   }
 }
