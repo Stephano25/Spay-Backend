@@ -126,6 +126,38 @@ export class AuthService {
     return { message: 'Mot de passe modifié avec succès' };
   }
 
+  /**
+   * Connexion ou création d'un utilisateur via Google OAuth
+   */
+  async loginWithGoogle(googleUser: any) {
+    const { email, firstName, lastName, profilePicture } = googleUser;
+
+    let user = await this.userModel.findOne({ email });
+    if (!user) {
+      // Créer un nouvel utilisateur avec Google
+      const qrCode = await this.generateUniqueQrCode();
+      user = new this.userModel({
+        email,
+        firstName,
+        lastName,
+        profilePicture,
+        qrCode,
+        balance: 0,
+        role: UserRole.USER,
+        isActive: true,
+        lastLogin: new Date(),
+        isGoogleUser: true,
+      });
+      await user.save();
+    } else {
+      user.lastLogin = new Date();
+      await user.save();
+    }
+
+    const access_token = this.signToken(user);
+    return { access_token, user: this.toUserResponse(user) };
+  }
+
   // ============================================================
   // Méthodes privées
   // ============================================================
