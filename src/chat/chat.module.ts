@@ -24,8 +24,8 @@ import { TransactionsModule } from '../transactions/transactions.module';
       }),
       inject: [ConfigService],
     }),
-    forwardRef(() => FriendsModule), // dépendance circulaire avec FriendsModule
-    TransactionsModule, // permet à ChatService d'exécuter un vrai transfert d'argent
+    forwardRef(() => FriendsModule),
+    TransactionsModule,
   ],
   controllers: [ChatController],
   providers: [ChatService, ChatGateway],

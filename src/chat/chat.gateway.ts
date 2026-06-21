@@ -1,3 +1,4 @@
+// backend/src/chat/chat.gateway.ts
 import {
   WebSocketGateway,
   WebSocketServer,
@@ -15,16 +16,13 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 
 @WebSocketGateway({
-  cors: {
-    origin: '*',
-    credentials: true,
-  },
+  cors: { origin: '*', credentials: true },
   namespace: '/',
 })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer() server: Server;
-  private connectedUsers = new Map<string, string>(); // userId -> socketId
-  private userSockets = new Map<string, string[]>(); // userId -> socketIds[]
+  private connectedUsers = new Map<string, string>();
+  private userSockets = new Map<string, string[]>();
 
   constructor(
     @Inject(forwardRef(() => ChatService)) private chatService: ChatService,
@@ -39,6 +37,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         client.handshake.headers?.authorization?.replace('Bearer ', '');
 
       if (!token) {
+        console.warn('🔴 Token manquant, déconnexion');
         client.emit('error', { message: 'Token manquant' });
         client.disconnect();
         return;
@@ -50,10 +49,12 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       const userId = payload.sub;
       if (!userId) {
+        console.warn('🔴 UserId manquant dans le token');
         client.disconnect();
         return;
       }
 
+      // Stocker l'utilisateur
       client.data.userId = userId;
       this.connectedUsers.set(userId, client.id);
 
@@ -64,20 +65,32 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       client.join(`user_${userId}`);
 
-      const friends = await this.friendsService.getFriends(userId);
-      const friendIds = friends.map((f) => f.friendId || f.userId);
+      // 🔥 Récupérer les amis et les notifier
+      try {
+        const friends = await this.friendsService.getFriends(userId);
+        console.log(`👥 Amis de ${userId}:`, friends.length);
+        
+        // Filtrer les IDs valides
+        const friendIds = friends
+          .map((f) => f.friendId || f.userId)
+          .filter((id) => id && id.toString() !== userId);
 
-      friendIds.forEach((fid) => {
-        this.server.to(`user_${fid}`).emit('userOnline', {
-          userId: userId,
-          isOnline: true,
+        console.log(`📤 Notification aux amis:`, friendIds);
+
+        friendIds.forEach((fid) => {
+          this.server.to(`user_${fid}`).emit('userOnline', {
+            userId: userId,
+            isOnline: true,
+          });
         });
-      });
+      } catch (error) {
+        console.error('Erreur lors de la récupération des amis:', error);
+      }
 
       client.emit('onlineUsers', Array.from(this.connectedUsers.keys()));
       console.log(`✅ Utilisateur connecté: ${userId}`);
     } catch (error) {
-      console.error('Erreur de connexion:', error);
+      console.error('❌ Erreur de connexion:', error);
       client.emit('error', { message: 'Erreur d\'authentification' });
       client.disconnect();
     }
@@ -97,9 +110,12 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.userSockets.delete(userId);
       this.connectedUsers.delete(userId);
 
+      // 🔥 Notifier les amis que l'utilisateur est hors ligne
       try {
         const friends = await this.friendsService.getFriends(userId);
-        const friendIds = friends.map((f) => f.friendId || f.userId);
+        const friendIds = friends
+          .map((f) => f.friendId || f.userId)
+          .filter((id) => id && id.toString() !== userId);
 
         friendIds.forEach((fid) => {
           this.server.to(`user_${fid}`).emit('userOnline', {
@@ -113,6 +129,13 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     console.log(`❌ Utilisateur déconnecté: ${userId}`);
+  }
+
+  /**
+   * 🔥 Récupère les utilisateurs connectés (utilisée par AdminService)
+   */
+  getOnlineUsers(): string[] {
+    return Array.from(this.connectedUsers.keys());
   }
 
   @SubscribeMessage('sendMessage')
@@ -244,6 +267,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
   }
 
+  /**
+   * 🔥 Notifie un utilisateur d'un événement (utilisé par ChatService)
+   */
   notifyUser(userId: string, event: string, data: any) {
     const socketIds = this.userSockets.get(userId);
     if (socketIds) {
@@ -253,8 +279,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
-  /** 🔥 Récupère la liste des userId actuellement connectés (pour AdminService) */
-  getOnlineUsers(): string[] {
-    return Array.from(this.connectedUsers.keys());
+  /**
+   * 🔥 Récupère le nombre d'utilisateurs connectés
+   */
+  getConnectedUsersCount(): number {
+    return this.connectedUsers.size;
   }
 }

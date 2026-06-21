@@ -1,3 +1,4 @@
+// backend/src/chat/chat.service.ts
 import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -18,9 +19,6 @@ export class ChatService {
     @Inject(forwardRef(() => ChatGateway)) private chatGateway: ChatGateway,
   ) {}
 
-  // ============================================================
-  // ENVOI DE MESSAGE (texte, image, fichier, emoji, argent)
-  // ============================================================
   async saveMessage(messageData: any): Promise<MessageResponseDto> {
     try {
       const senderObjectId = new Types.ObjectId(messageData.senderId);
@@ -28,10 +26,6 @@ export class ChatService {
 
       let moneyTransfer: any = undefined;
 
-      // ⚠️ CORRECTION IMPORTANTE :
-      // Avant, un message de type "money" créait juste une bulle avec
-      // status "pending" sans jamais déplacer le moindre Ariary.
-      // On exécute maintenant le vrai transfert via TransactionsService.
       if (messageData.type === 'money' && messageData.moneyTransfer?.amount) {
         moneyTransfer = await this.processMoneyTransfer(
           messageData.senderId,
@@ -63,13 +57,6 @@ export class ChatService {
     }
   }
 
-  /**
-   * Exécute réellement le virement entre les deux utilisateurs.
-   * Ne lève jamais d'exception : en cas d'échec (solde insuffisant,
-   * destinataire invalide, montant incorrect...), on renvoie un statut
-   * "failed" avec la raison, pour que le message s'affiche quand même
-   * dans la conversation (comme une tentative de paiement échouée).
-   */
   private async processMoneyTransfer(senderId: string, receiverId: string, amount: number) {
     try {
       if (senderId === receiverId) {
@@ -99,9 +86,6 @@ export class ChatService {
     }
   }
 
-  // ============================================================
-  // CONVERSATIONS
-  // ============================================================
   async getConversations(userId: string): Promise<any[]> {
     const userObjectId = new Types.ObjectId(userId);
 
@@ -109,6 +93,7 @@ export class ChatService {
       {
         $match: {
           $or: [{ senderId: userObjectId }, { receiverId: userObjectId }],
+          isDeleted: { $ne: true },
         },
       },
       { $sort: { createdAt: -1 } },
@@ -141,6 +126,7 @@ export class ChatService {
                   $and: [
                     { $eq: ['$$msg.receiverId', userObjectId] },
                     { $eq: ['$$msg.isRead', false] },
+                    { $ne: ['$$msg.isDeleted', true] },
                   ],
                 },
               },
@@ -254,9 +240,6 @@ export class ChatService {
     };
   }
 
-  // ============================================================
-  // SUPPRESSION (soft delete -> placeholder "Message supprimé")
-  // ============================================================
   async deleteMessage(messageId: string, userId: string): Promise<MessageResponseDto> {
     const message = await this.messageModel.findById(messageId);
     if (!message) throw new NotFoundException('Message non trouvé');
@@ -276,9 +259,6 @@ export class ChatService {
     return dto;
   }
 
-  // ============================================================
-  // MODIFICATION (messages texte uniquement)
-  // ============================================================
   async updateMessage(messageId: string, userId: string, content: string): Promise<MessageResponseDto> {
     const message = await this.messageModel.findById(messageId);
     if (!message) throw new NotFoundException('Message non trouvé');
@@ -306,9 +286,6 @@ export class ChatService {
     return dto;
   }
 
-  // ============================================================
-  // RÉACTIONS (1 réaction par utilisateur, la dernière remplace l'ancienne)
-  // ============================================================
   async reactToMessage(messageId: string, userId: string, emoji: string): Promise<MessageResponseDto> {
     if (!emoji) throw new BadRequestException('Emoji requis');
 
@@ -343,9 +320,6 @@ export class ChatService {
     return dto;
   }
 
-  // ============================================================
-  // Helper de mapping
-  // ============================================================
   private toResponseDto(message: any): MessageResponseDto {
     const senderPopulated = message.senderId && message.senderId.firstName !== undefined;
 

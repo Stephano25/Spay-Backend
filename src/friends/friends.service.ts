@@ -1,3 +1,4 @@
+// src/friends/friends.service.ts
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Inject, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -15,12 +16,9 @@ export class FriendsService {
     @Inject(forwardRef(() => ChatGateway)) private chatGateway: ChatGateway,
   ) {}
 
-  // ============================================================
-  // LISTES
-  // ============================================================
-
   /**
    * Récupère la liste des amis acceptés d'un utilisateur
+   * 🔥 CORRECTION : gestion des références nulles
    */
   async getFriends(userId: string): Promise<any[]> {
     const userObjectId = new Types.ObjectId(userId);
@@ -33,17 +31,25 @@ export class FriendsService {
       .populate('friendId', 'firstName lastName email phoneNumber profilePicture isOnline lastSeen')
       .exec();
 
-    return friendships.map((f) => ({
-      id: f._id,
-      userId: f.userId._id,
-      friendId: f.friendId._id,
-      status: f.status,
-      friend: f.userId._id.toString() === userId ? f.friendId : f.userId,
-    }));
+    // 🔥 Filtrer les relations où l'un des côtés est null (utilisateur supprimé)
+    const validFriendships = friendships.filter(f => f.userId && f.friendId);
+
+    return validFriendships.map((f) => {
+      const user = f.userId as any;
+      const friend = f.friendId as any;
+      const isCurrentUser = user._id.toString() === userId;
+      return {
+        id: f._id,
+        userId: user._id,
+        friendId: friend._id,
+        status: f.status,
+        friend: isCurrentUser ? friend : user,
+      };
+    });
   }
 
   /**
-   * Récupère la liste des demandes d'ami reçues (pending)
+   * Récupère les demandes d'ami reçues
    */
   async getFriendRequests(userId: string): Promise<any[]> {
     const requests = await this.friendModel
@@ -54,17 +60,20 @@ export class FriendsService {
       .populate('userId', 'firstName lastName email profilePicture')
       .exec();
 
-    return requests.map((r) => ({
-      id: r._id,
-      senderId: r.userId._id,
-      receiverId: r.friendId._id,
-      status: r.status,
-      sender: r.userId,
-    }));
+    // Filtrer les demandes dont l'expéditeur existe encore
+    return requests
+      .filter(r => r.userId)
+      .map((r) => ({
+        id: r._id,
+        senderId: (r.userId as any)._id,
+        receiverId: r.friendId,
+        status: r.status,
+        sender: r.userId,
+      }));
   }
 
   /**
-   * Récupère la liste des utilisateurs bloqués par l'utilisateur
+   * Récupère les utilisateurs bloqués
    */
   async getBlockedUsers(userId: string): Promise<any[]> {
     const userObjectId = new Types.ObjectId(userId);
@@ -78,22 +87,26 @@ export class FriendsService {
       .populate('friendId', 'firstName lastName email phoneNumber profilePicture')
       .exec();
 
-    return blockedRelations.map((f) => {
-      const blockedUser = f.userId._id.toString() === userId ? f.friendId : f.userId;
-      return {
-        id: f._id,
-        userId: f.userId._id,
-        friendId: f.friendId._id,
-        status: f.status,
-        blockedBy: f.blockedBy,
-        createdAt: f.createdAt,
-        friend: blockedUser,
-      };
-    });
+    return blockedRelations
+      .filter(f => f.userId && f.friendId)
+      .map((f) => {
+        const user = f.userId as any;
+        const friend = f.friendId as any;
+        const blockedUser = user._id.toString() === userId ? friend : user;
+        return {
+          id: f._id,
+          userId: user._id,
+          friendId: friend._id,
+          status: f.status,
+          blockedBy: f.blockedBy,
+          createdAt: f.createdAt,
+          friend: blockedUser,
+        };
+      });
   }
 
   /**
-   * Récupère des suggestions d'amis (utilisateurs actifs non encore amis)
+   * Suggestions d'amis
    */
   async getSuggestions(userId: string): Promise<any[]> {
     const userObjectId = new Types.ObjectId(userId);
@@ -101,14 +114,17 @@ export class FriendsService {
       $or: [{ userId: userObjectId }, { friendId: userObjectId }],
     });
 
-    const existingFriendIds = existingFriends.map((f) =>
-      f.userId.toString() === userId ? f.friendId.toString() : f.userId.toString(),
-    );
-    existingFriendIds.push(userId);
+    const existingFriendIds = existingFriends
+      .map((f) => {
+        const uid = f.userId?.toString();
+        const fid = f.friendId?.toString();
+        return uid === userId ? fid : uid;
+      })
+      .filter(id => id && id !== userId) as string[];
 
     const suggestions = await this.userModel
       .find({
-        _id: { $nin: existingFriendIds.map((id) => new Types.ObjectId(id)) },
+        _id: { $nin: [...existingFriendIds, userId].map(id => new Types.ObjectId(id)) },
         isActive: true,
       })
       .limit(10)
@@ -130,7 +146,7 @@ export class FriendsService {
   }
 
   /**
-   * Recherche des utilisateurs par nom, prénom ou email
+   * Recherche d'utilisateurs
    */
   async searchUsers(query: string, currentUserId: string): Promise<any[]> {
     const users = await this.userModel
@@ -174,7 +190,7 @@ export class FriendsService {
   }
 
   /**
-   * Recherche des utilisateurs par leurs numéros de téléphone
+   * Trouver des utilisateurs par téléphone
    */
   async findUsersByPhones(phones: string[], currentUserId: string): Promise<any[]> {
     const cleanPhones = phones.map((p) => p.replace(/\s/g, '').replace(/[^0-9]/g, ''));
@@ -191,9 +207,13 @@ export class FriendsService {
       $or: [{ userId: currentUserId }, { friendId: currentUserId }],
       status: { $in: ['accepted', 'pending', 'blocked'] },
     });
-    const excludedIds = existingFriends.map((f) =>
-      f.userId.toString() === currentUserId ? f.friendId.toString() : f.userId.toString(),
-    );
+    const excludedIds = existingFriends
+      .map((f) => {
+        const uid = f.userId?.toString();
+        const fid = f.friendId?.toString();
+        return uid === currentUserId ? fid : uid;
+      })
+      .filter(id => id) as string[];
 
     return users
       .filter((u) => !excludedIds.includes(u._id.toString()))
@@ -210,7 +230,7 @@ export class FriendsService {
   }
 
   /**
-   * Vérifie le statut de blocage entre deux utilisateurs (utilisé par le chat)
+   * Vérification de blocage (utilisée par le chat)
    */
   async checkBlockStatus(userId: string, otherUserId: string) {
     const friendship = await this.friendModel.findOne({
@@ -233,12 +253,9 @@ export class FriendsService {
   }
 
   // ============================================================
-  // ACTIONS
+  // ACTIONS (sendFriendRequest, acceptFriendRequest, etc.)
   // ============================================================
 
-  /**
-   * Envoie une demande d'ami
-   */
   async sendFriendRequest(userId: string, friendId: string) {
     if (userId === friendId) {
       throw new BadRequestException('Vous ne pouvez pas vous ajouter vous-même');
@@ -304,9 +321,6 @@ export class FriendsService {
     };
   }
 
-  /**
-   * Accepte une demande d'ami et crée une conversation
-   */
   async acceptFriendRequest(userId: string, requestId: string) {
     const request = await this.friendModel.findById(requestId);
     if (!request) {
@@ -322,7 +336,6 @@ export class FriendsService {
     request.status = 'accepted';
     await request.save();
 
-    // Mettre à jour les listes d'amis dans User
     await this.userModel.findByIdAndUpdate(request.userId, {
       $addToSet: { friends: request.friendId },
     });
@@ -360,9 +373,6 @@ export class FriendsService {
     };
   }
 
-  /**
-   * Refuse une demande d'ami
-   */
   async declineFriendRequest(userId: string, requestId: string) {
     const request = await this.friendModel.findById(requestId);
     if (!request) {
@@ -386,9 +396,6 @@ export class FriendsService {
     };
   }
 
-  /**
-   * Supprime un ami existant
-   */
   async removeFriend(userId: string, friendId: string) {
     const friendship = await this.friendModel.findOne({
       $or: [
@@ -406,7 +413,6 @@ export class FriendsService {
     friendship.deletedBy = new Types.ObjectId(userId);
     await friendship.save();
 
-    // Retirer des listes d'amis dans User
     await this.userModel.findByIdAndUpdate(userId, { $pull: { friends: friendId } });
     await this.userModel.findByIdAndUpdate(friendId, { $pull: { friends: userId } });
 
@@ -422,9 +428,6 @@ export class FriendsService {
     };
   }
 
-  /**
-   * Bloque un utilisateur
-   */
   async blockUser(userId: string, userToBlockId: string) {
     if (userId === userToBlockId) {
       throw new BadRequestException('Vous ne pouvez pas vous bloquer vous-même');
@@ -441,7 +444,6 @@ export class FriendsService {
     });
 
     if (friendship) {
-      // Si la relation existait déjà, on la transforme en blocage
       friendship.status = 'blocked';
       friendship.blockedBy = userObjectId;
       await friendship.save();
@@ -455,7 +457,6 @@ export class FriendsService {
       await friendship.save();
     }
 
-    // Retirer des listes d'amis si présent
     await this.userModel.findByIdAndUpdate(userId, { $pull: { friends: userToBlockId } });
     await this.userModel.findByIdAndUpdate(userToBlockId, { $pull: { friends: userId } });
 
@@ -467,9 +468,6 @@ export class FriendsService {
     };
   }
 
-  /**
-   * Débloque un utilisateur
-   */
   async unblockUser(userId: string, userToUnblockId: string) {
     const friendship = await this.friendModel.findOne({
       $or: [
@@ -489,21 +487,5 @@ export class FriendsService {
       message: 'Utilisateur débloqué',
       success: true,
     };
-  }
-
-  // ============================================================
-  // HELPERS PRIVÉS
-  // ============================================================
-
-  /**
-   * Recherche une relation entre deux utilisateurs (quel que soit le statut)
-   */
-  private async findLink(userId: string, otherUserId: string): Promise<FriendDocument | null> {
-    return this.friendModel.findOne({
-      $or: [
-        { userId, friendId: otherUserId },
-        { userId: otherUserId, friendId: userId },
-      ],
-    });
   }
 }
