@@ -36,7 +36,7 @@ export class AuthController {
   }
 
   // ============================================================
-  // Google OAuth
+  // Google OAuth - CORRIGÉ
   // ============================================================
 
   @Get('google')
@@ -48,9 +48,26 @@ export class AuthController {
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))
   async googleAuthRedirect(@Req() req, @Res() res) {
-    const user = req.user; // fourni par la stratégie Google
-    const token = await this.authService.loginWithGoogle(user);
-    // Rediriger vers le frontend avec le token
-    res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${token.access_token}`);
+    try {
+      const user = req.user;
+      console.log('👤 Utilisateur Google reçu:', user?.email);
+      
+      if (!user) {
+        console.error('❌ Aucun utilisateur reçu de Google');
+        return res.redirect(`${process.env.FRONTEND_URL}/login?error=auth_failed`);
+      }
+
+      const token = await this.authService.loginWithGoogle(user);
+      console.log('✅ Token généré pour:', user.email);
+      
+      // Rediriger vers le frontend avec le token
+      const redirectUrl = `${process.env.FRONTEND_URL}/auth/callback?token=${token.access_token}`;
+      console.log('🔀 Redirection vers:', redirectUrl);
+      
+      return res.redirect(redirectUrl);
+    } catch (error) {
+      console.error('❌ Erreur callback Google:', error);
+      return res.redirect(`${process.env.FRONTEND_URL}/login?error=server_error`);
+    }
   }
 }
