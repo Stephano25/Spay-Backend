@@ -21,8 +21,8 @@ import { ConfigService } from '@nestjs/config';
 })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer() server: Server;
-  private connectedUsers = new Map<string, string>(); // userId -> socketId
-  private userSockets = new Map<string, string[]>(); // userId -> socketIds[]
+  private connectedUsers = new Map<string, string>();
+  private userSockets = new Map<string, string[]>();
 
   constructor(
     @Inject(forwardRef(() => ChatService)) private chatService: ChatService,
@@ -75,43 +75,28 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         const friends = await this.friendsService.getFriends(userId);
         console.log(`👥 ${userId} a ${friends.length} amis`);
 
-        if (friends.length === 0) {
-          console.log(`⚠️ ${userId} n'a pas d'amis`);
-        } else {
-          // Afficher les amis
-          friends.forEach((f: any, i: number) => {
-            const friendId = f.friendId || f.userId;
-            const friendName = f.friend?.firstName || 'Inconnu';
-            console.log(`  Ami ${i+1}: ID=${friendId}, Nom=${friendName}`);
-          });
-
-          // Filtrer les IDs valides
-          const friendIds = friends
-            .map((f: any) => {
-              const id = f.friendId || f.userId;
-              return id?.toString();
-            })
-            .filter((id: string) => id && id !== userId);
-
-          console.log(`📤 Notification aux amis de ${userId}:`, friendIds);
-
-          // Notifier chaque ami
-          for (const fid of friendIds) {
-            // Vérifier si l'ami est connecté
-            const isFriendConnected = this.connectedUsers.has(fid);
-            console.log(`📤 Envoi userOnline à ${fid}, connecté: ${isFriendConnected}`);
-            
-            this.server.to(`user_${fid}`).emit('userOnline', {
-              userId: userId,
-              isOnline: true,
-            });
+        if (friends.length > 0) {
+          // 🔥 Notifier chaque ami que l'utilisateur est en ligne
+          for (const f of friends) {
+            const friendId = f.friendId?.toString();
+            if (friendId && friendId !== userId) {
+              const isFriendConnected = this.connectedUsers.has(friendId);
+              console.log(`📤 Envoi userOnline à ${friendId}, connecté: ${isFriendConnected}`);
+              
+              this.server.to(`user_${friendId}`).emit('userOnline', {
+                userId: userId,
+                isOnline: true,
+              });
+            }
           }
+        } else {
+          console.log(`⚠️ ${userId} n'a pas d'amis`);
         }
       } catch (error) {
         console.error('❌ Erreur lors de la récupération des amis:', error);
       }
 
-      // Envoyer la liste des utilisateurs connectés
+      // 🔥 Envoyer la liste des utilisateurs connectés
       const onlineUsers = Array.from(this.connectedUsers.keys());
       console.log(`📊 Utilisateurs connectés:`, onlineUsers);
       client.emit('onlineUsers', onlineUsers);
@@ -147,21 +132,15 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // 🔥 Notifier les amis que l'utilisateur est hors ligne
       try {
         const friends = await this.friendsService.getFriends(userId);
-        const friendIds = friends
-          .map((f: any) => {
-            const id = f.friendId || f.userId;
-            return id?.toString();
-          })
-          .filter((id: string) => id && id !== userId);
-
-        console.log(`📤 Notification hors-ligne aux amis de ${userId}:`, friendIds);
-
-        for (const fid of friendIds) {
-          console.log(`📤 Envoi userOnline(false) à ${fid}`);
-          this.server.to(`user_${fid}`).emit('userOnline', {
-            userId: userId,
-            isOnline: false,
-          });
+        for (const f of friends) {
+          const friendId = f.friendId?.toString();
+          if (friendId && friendId !== userId) {
+            console.log(`📤 Envoi userOnline(false) à ${friendId}`);
+            this.server.to(`user_${friendId}`).emit('userOnline', {
+              userId: userId,
+              isOnline: false,
+            });
+          }
         }
       } catch (error) {
         console.error('❌ Erreur lors de la notification de déconnexion:', error);
@@ -318,6 +297,16 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         accepted: data.accepted,
       });
     });
+  }
+
+  @SubscribeMessage('getOnlineUsers')
+  handleGetOnlineUsers(@ConnectedSocket() client: Socket) {
+    const userId = client.data?.userId;
+    if (!userId) return;
+
+    const onlineUsers = Array.from(this.connectedUsers.keys());
+    console.log(`📊 Demande des utilisateurs connectés par ${userId}:`, onlineUsers);
+    client.emit('onlineUsers', onlineUsers);
   }
 
   notifyUser(userId: string, event: string, data: any) {

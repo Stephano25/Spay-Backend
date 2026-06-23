@@ -1,3 +1,4 @@
+// backend/src/chat/chat.controller.ts
 import {
   Controller,
   Get,
@@ -66,11 +67,6 @@ export class ChatController {
     return this.chatService.updateMessage(messageId, userId, content);
   }
 
-  // ⚠️ CORRECTION : on renvoie maintenant le message mis à jour
-  // (isDeleted: true, content vide) plutôt qu'un simple {success}.
-  // Cela permet au front d'afficher un placeholder "Message supprimé"
-  // à la bonne place dans la conversation, comme sur Messenger,
-  // au lieu de faire disparaître la bulle.
   @Delete('message/:messageId')
   async deleteMessage(@Req() req, @Param('messageId') messageId: string) {
     const userId = req.user.userId;
@@ -103,11 +99,12 @@ export class ChatController {
             .fill(null)
             .map(() => Math.round(Math.random() * 16).toString(16))
             .join('');
-          cb(null, `${randomName}${extname(file.originalname)}`);
+          const ext = extname(file.originalname);
+          cb(null, `${randomName}${ext}`);
         },
       }),
       limits: {
-        fileSize: 150 * 1024 * 1024,
+        fileSize: 150 * 1024 * 1024, // 150 MB
       },
     }),
   )

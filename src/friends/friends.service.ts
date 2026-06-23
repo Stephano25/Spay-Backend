@@ -17,18 +17,18 @@ export class FriendsService {
   ) {}
 
   // ============================================================
-  // RÉCUPÉRATION DES AMIS
+  // RÉCUPÉRATION DES AMIS – CORRECTION FINALE
   // ============================================================
 
-  /**
-   * Récupère la liste des amis acceptés d'un utilisateur
-   * 🔥 CORRECTION : retourne le bon ID de l'ami
-   */
   async getFriends(userId: string): Promise<any[]> {
     const userObjectId = new Types.ObjectId(userId);
+    
     const friendships = await this.friendModel
       .find({
-        $or: [{ userId: userObjectId }, { friendId: userObjectId }],
+        $or: [
+          { userId: userObjectId },
+          { friendId: userObjectId }
+        ],
         status: 'accepted',
       })
       .populate('userId', 'firstName lastName email phoneNumber profilePicture isOnline lastSeen')
@@ -37,35 +37,54 @@ export class FriendsService {
 
     console.log(`🔍 getFriends: ${friendships.length} relations trouvées pour ${userId}`);
 
-    // Filtrer les relations où l'un des côtés est null
     const validFriendships = friendships.filter(f => f.userId && f.friendId);
     console.log(`✅ ${validFriendships.length} relations valides`);
 
-    return validFriendships.map((f) => {
+    const result = validFriendships.map((f) => {
       const user = f.userId as any;
       const friend = f.friendId as any;
       
-      // 🔥 CORRECTION : Déterminer correctement qui est l'ami
+      // 🔥 Déterminer correctement qui est l'utilisateur courant
       const isCurrentUser = user._id.toString() === userId;
+      
+      // 🔥 L'AMI est TOUJOURS l'autre utilisateur
       const friendObj = isCurrentUser ? friend : user;
       const friendId = isCurrentUser ? friend._id.toString() : user._id.toString();
-      const userIdForRecord = isCurrentUser ? user._id.toString() : friend._id.toString();
+      const currentUserId = isCurrentUser ? user._id.toString() : friend._id.toString();
       
-      console.log(`  - Ami: ${friendId} (${friendObj.firstName} ${friendObj.lastName})`);
+      console.log(`  ✅ Utilisateur courant: ${currentUserId} -> AMI: ${friendId} (${friendObj.firstName} ${friendObj.lastName})`);
       
       return {
-        id: f._id,
-        userId: userIdForRecord,
-        friendId: friendId,
+        id: f._id.toString(),
+        userId: currentUserId,
+        friendId: friendId, // 🔥 TOUJOURS l'ID de l'AMI
         status: f.status,
-        friend: friendObj,
+        friend: {
+          id: friendObj._id.toString(),
+          firstName: friendObj.firstName,
+          lastName: friendObj.lastName,
+          email: friendObj.email,
+          phoneNumber: friendObj.phoneNumber,
+          profilePicture: friendObj.profilePicture,
+          isOnline: friendObj.isOnline || false,
+          lastSeen: friendObj.lastSeen,
+        },
       };
     });
+
+    console.log('📤 Résultat getFriends:', result.map(r => ({
+      userId: r.userId,
+      friendId: r.friendId,
+      friendName: r.friend.firstName
+    })));
+
+    return result;
   }
 
-  /**
-   * Récupère les demandes d'ami reçues
-   */
+  // ============================================================
+  // DEMANDES D'AMI
+  // ============================================================
+
   async getFriendRequests(userId: string): Promise<any[]> {
     const requests = await this.friendModel
       .find({
@@ -75,13 +94,12 @@ export class FriendsService {
       .populate('userId', 'firstName lastName email profilePicture')
       .exec();
 
-    // Filtrer les demandes dont l'expéditeur existe encore
     return requests
       .filter(r => r.userId)
       .map((r) => {
         const sender = r.userId as any;
         return {
-          id: r._id,
+          id: r._id.toString(),
           senderId: sender._id.toString(),
           receiverId: r.friendId.toString(),
           status: r.status,
@@ -96,9 +114,10 @@ export class FriendsService {
       });
   }
 
-  /**
-   * Récupère les utilisateurs bloqués
-   */
+  // ============================================================
+  // UTILISATEURS BLOQUÉS
+  // ============================================================
+
   async getBlockedUsers(userId: string): Promise<any[]> {
     const userObjectId = new Types.ObjectId(userId);
     const blockedRelations = await this.friendModel
@@ -118,23 +137,29 @@ export class FriendsService {
         const friend = f.friendId as any;
         const isCurrentUser = user._id.toString() === userId;
         const blockedUser = isCurrentUser ? friend : user;
-        const blockedUserId = isCurrentUser ? friend._id.toString() : user._id.toString();
         
         return {
-          id: f._id,
+          id: f._id.toString(),
           userId: isCurrentUser ? user._id.toString() : friend._id.toString(),
-          friendId: blockedUserId,
+          friendId: isCurrentUser ? friend._id.toString() : user._id.toString(),
           status: f.status,
           blockedBy: f.blockedBy?.toString(),
           createdAt: f.createdAt,
-          friend: blockedUser,
+          friend: {
+            id: blockedUser._id.toString(),
+            firstName: blockedUser.firstName,
+            lastName: blockedUser.lastName,
+            email: blockedUser.email,
+            profilePicture: blockedUser.profilePicture,
+          },
         };
       });
   }
 
-  /**
-   * Suggestions d'amis
-   */
+  // ============================================================
+  // SUGGESTIONS D'AMIS
+  // ============================================================
+
   async getSuggestions(userId: string): Promise<any[]> {
     const userObjectId = new Types.ObjectId(userId);
     const existingFriends = await this.friendModel.find({
@@ -172,9 +197,10 @@ export class FriendsService {
     }));
   }
 
-  /**
-   * Recherche d'utilisateurs
-   */
+  // ============================================================
+  // RECHERCHE D'UTILISATEURS
+  // ============================================================
+
   async searchUsers(query: string, currentUserId: string): Promise<any[]> {
     const users = await this.userModel
       .find({
@@ -216,9 +242,10 @@ export class FriendsService {
     );
   }
 
-  /**
-   * Trouver des utilisateurs par téléphone
-   */
+  // ============================================================
+  // TROUVER UTILISATEURS PAR TÉLÉPHONE
+  // ============================================================
+
   async findUsersByPhones(phones: string[], currentUserId: string): Promise<any[]> {
     const cleanPhones = phones.map((p) => p.replace(/\s/g, '').replace(/[^0-9]/g, ''));
     const users = await this.userModel
@@ -256,9 +283,10 @@ export class FriendsService {
       }));
   }
 
-  /**
-   * Vérification de blocage (utilisée par le chat)
-   */
+  // ============================================================
+  // VÉRIFICATION DE BLOCAGE
+  // ============================================================
+
   async checkBlockStatus(userId: string, otherUserId: string) {
     const friendship = await this.friendModel.findOne({
       $or: [
@@ -283,9 +311,6 @@ export class FriendsService {
   // ACTIONS
   // ============================================================
 
-  /**
-   * Envoie une demande d'ami
-   */
   async sendFriendRequest(userId: string, friendId: string) {
     if (userId === friendId) {
       throw new BadRequestException('Vous ne pouvez pas vous ajouter vous-même');
@@ -351,9 +376,6 @@ export class FriendsService {
     };
   }
 
-  /**
-   * Accepte une demande d'ami
-   */
   async acceptFriendRequest(userId: string, requestId: string) {
     const request = await this.friendModel.findById(requestId);
     if (!request) {
@@ -406,9 +428,6 @@ export class FriendsService {
     };
   }
 
-  /**
-   * Refuse une demande d'ami
-   */
   async declineFriendRequest(userId: string, requestId: string) {
     const request = await this.friendModel.findById(requestId);
     if (!request) {
@@ -432,9 +451,6 @@ export class FriendsService {
     };
   }
 
-  /**
-   * Supprime un ami
-   */
   async removeFriend(userId: string, friendId: string) {
     const friendship = await this.friendModel.findOne({
       $or: [
@@ -467,9 +483,6 @@ export class FriendsService {
     };
   }
 
-  /**
-   * Bloque un utilisateur
-   */
   async blockUser(userId: string, userToBlockId: string) {
     if (userId === userToBlockId) {
       throw new BadRequestException('Vous ne pouvez pas vous bloquer vous-même');
@@ -510,9 +523,6 @@ export class FriendsService {
     };
   }
 
-  /**
-   * Débloque un utilisateur
-   */
   async unblockUser(userId: string, userToUnblockId: string) {
     const friendship = await this.friendModel.findOne({
       $or: [
