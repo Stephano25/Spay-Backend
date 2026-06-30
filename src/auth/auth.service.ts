@@ -22,17 +22,12 @@ export class AuthService {
     private configService: ConfigService,
   ) {}
 
-  /**
-   * Inscription d'un nouvel utilisateur
-   */
   async register(registerDto: RegisterDto) {
-    // Vérifier l'unicité de l'email
     const existingEmail = await this.userModel.findOne({ email: registerDto.email.toLowerCase() });
     if (existingEmail) {
       throw new ConflictException('Cet email est déjà utilisé');
     }
 
-    // Vérifier l'unicité du téléphone si fourni
     if (registerDto.phoneNumber) {
       const existingPhone = await this.userModel.findOne({ phoneNumber: registerDto.phoneNumber });
       if (existingPhone) {
@@ -40,13 +35,9 @@ export class AuthService {
       }
     }
 
-    // Hachage du mot de passe
     const hashedPassword = await bcrypt.hash(registerDto.password, 10);
-
-    // Génération d'un QR code unique
     const qrCode = await this.generateUniqueQrCode();
 
-    // Création de l'utilisateur
     const user = new this.userModel({
       email: registerDto.email.toLowerCase(),
       password: hashedPassword,
@@ -62,7 +53,6 @@ export class AuthService {
 
     await user.save();
 
-    // Génération du token JWT
     const access_token = this.signToken(user);
 
     return {
@@ -71,9 +61,6 @@ export class AuthService {
     };
   }
 
-  /**
-   * Connexion d'un utilisateur existant
-   */
   async login(loginDto: LoginDto) {
     const user = await this.userModel.findOne({ email: loginDto.email.toLowerCase() });
     if (!user) {
@@ -89,7 +76,6 @@ export class AuthService {
       throw new UnauthorizedException('Ce compte a été désactivé');
     }
 
-    // Mise à jour de la dernière connexion
     user.lastLogin = new Date();
     await user.save();
 
@@ -101,9 +87,6 @@ export class AuthService {
     };
   }
 
-  /**
-   * Récupération du profil utilisateur
-   */
   async getProfile(userId: string) {
     const user = await this.userModel.findById(userId);
     if (!user) {
@@ -112,9 +95,6 @@ export class AuthService {
     return this.toUserResponse(user);
   }
 
-  /**
-   * Changement du mot de passe
-   */
   async changePassword(userId: string, dto: ChangePasswordDto) {
     const user = await this.userModel.findById(userId);
     if (!user) {
@@ -132,15 +112,11 @@ export class AuthService {
     return { message: 'Mot de passe modifié avec succès' };
   }
 
-  /**
-   * Connexion ou création d'un utilisateur via Google OAuth
-   */
   async loginWithGoogle(googleUser: any) {
     const { email, firstName, lastName, profilePicture } = googleUser;
 
     let user = await this.userModel.findOne({ email });
     if (!user) {
-      // Créer un nouvel utilisateur avec Google
       const qrCode = await this.generateUniqueQrCode();
       user = new this.userModel({
         email,
@@ -165,15 +141,19 @@ export class AuthService {
   }
 
   // ============================================================
-  // Méthodes privées
+  // MÉTHODES PRIVÉES
   // ============================================================
 
-  /**
-   * Génère un token JWT pour l'utilisateur
-   * Utilise la même clé que dans .env
-   */
   private signToken(user: UserDocument): string {
     const secret = this.configService.get<string>('JWT_SECRET');
+    
+    if (!secret) {
+      console.error('❌ JWT_SECRET non défini dans .env');
+      throw new Error('JWT_SECRET non configuré');
+    }
+
+    console.log('🔑 Signature du token avec JWT_SECRET:', secret.substring(0, 10) + '...');
+    
     return this.jwtService.sign(
       {
         sub: user._id.toString(),
@@ -187,9 +167,6 @@ export class AuthService {
     );
   }
 
-  /**
-   * Génère un QR code unique pour l'utilisateur
-   */
   private async generateUniqueQrCode(): Promise<string> {
     const maxAttempts = 5;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -202,9 +179,6 @@ export class AuthService {
     return `SPAYE-${crypto.randomBytes(12).toString('hex').toUpperCase()}`;
   }
 
-  /**
-   * Transforme un document utilisateur en objet de réponse (sans le mot de passe)
-   */
   private toUserResponse(user: UserDocument) {
     return {
       id: user._id.toString(),

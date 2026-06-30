@@ -37,9 +37,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private configService: ConfigService,
   ) {}
 
-  async handleConnection(client: Socket) {
+  async handleConnection(client: Socket): Promise<void> {
     try {
-      // Récupérer le token depuis plusieurs sources
+      // Récupérer le token
       let token = client.handshake.auth?.token ||
                   client.handshake.headers?.authorization?.replace('Bearer ', '');
 
@@ -52,15 +52,19 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return;
       }
 
-      // Vérifier le token avec la même clé que le module JWT
+      // Vérifier que JWT_SECRET est défini
       const secret = this.configService.get<string>('JWT_SECRET');
       
       if (!secret) {
         console.error('❌ JWT_SECRET non défini dans .env');
+        client.emit('error', { message: 'Erreur de configuration serveur' });
         client.disconnect();
         return;
       }
 
+      console.log(`🔐 Vérification du token avec JWT_SECRET: ${secret.substring(0, 10)}...`);
+
+      // Vérifier le token avec la même clé
       const payload = this.jwtService.verify(token, {
         secret: secret,
       });
@@ -106,7 +110,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
           }
         }
       } catch (error) {
-        console.error('❌ Erreur lors de la récupération des amis:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Erreur inconnue';
+        console.error('❌ Erreur lors de la récupération des amis:', errorMessage);
       }
 
       // Envoyer la liste des utilisateurs connectés
@@ -116,13 +121,16 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       console.log(`✅ Connexion terminée pour ${userId}`);
     } catch (error) {
-      console.error('❌ Erreur de connexion:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Erreur inconnue';
+      const errorStack = error instanceof Error ? error.stack : '';
+      console.error('❌ Erreur de connexion:', errorMessage);
+      console.error('❌ Stack:', errorStack);
       client.emit('error', { message: 'Erreur d\'authentification' });
       client.disconnect();
     }
   }
 
-  async handleDisconnect(client: Socket) {
+  async handleDisconnect(client: Socket): Promise<void> {
     const userId = client.data?.userId;
     if (!userId) {
       console.log('🔴 Déconnexion sans userId');
@@ -156,7 +164,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
           }
         }
       } catch (error) {
-        console.error('❌ Erreur lors de la notification de déconnexion:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Erreur inconnue';
+        console.error('❌ Erreur lors de la notification de déconnexion:', errorMessage);
       }
     } else {
       console.log(`ℹ️ ${userId} a encore ${sockets.length} socket(s) ouverte(s)`);
@@ -180,7 +189,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   // ============================================================
 
   @SubscribeMessage('sendMessage')
-  async handleMessage(@ConnectedSocket() client: Socket, @MessageBody() data: any) {
+  async handleMessage(@ConnectedSocket() client: Socket, @MessageBody() data: any): Promise<void> {
     const senderId = client.data?.userId;
     if (!senderId) {
       client.emit('error', { message: 'Non authentifié' });
@@ -224,7 +233,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         lastMessageTime: message.createdAt,
       });
     } catch (error) {
-      console.error('Erreur lors de l\'envoi du message:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Erreur inconnue';
+      console.error('Erreur lors de l\'envoi du message:', errorMessage);
       client.emit('error', { message: 'Erreur lors de l\'envoi du message' });
     }
   }
@@ -246,7 +256,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   async handleTyping(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { receiverId: string; isTyping: boolean },
-  ) {
+  ): Promise<void> {
     const senderId = client.data?.userId;
     if (!senderId) return;
 
@@ -266,7 +276,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   async handleMarkAsRead(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { senderId: string },
-  ) {
+  ): Promise<void> {
     const userId = client.data?.userId;
     if (!userId) return;
 
@@ -282,7 +292,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   async handleStartCall(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { receiverId: string; type: 'audio' | 'video' },
-  ) {
+  ): Promise<void> {
     const senderId = client.data?.userId;
     if (!senderId) return;
 
@@ -299,7 +309,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   async handleAnswerCall(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { callerId: string; accepted: boolean },
-  ) {
+  ): Promise<void> {
     const userId = client.data?.userId;
     if (!userId) return;
 
@@ -313,7 +323,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('getOnlineUsers')
-  handleGetOnlineUsers(@ConnectedSocket() client: Socket) {
+  handleGetOnlineUsers(@ConnectedSocket() client: Socket): void {
     const userId = client.data?.userId;
     if (!userId) return;
 
@@ -322,7 +332,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client.emit('onlineUsers', onlineUsers);
   }
 
-  notifyUser(userId: string, event: string, data: any) {
+  notifyUser(userId: string, event: string, data: any): void {
     const socketIds = this.userSockets.get(userId);
     if (socketIds) {
       socketIds.forEach((socketId) => {

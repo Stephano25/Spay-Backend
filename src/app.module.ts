@@ -1,4 +1,8 @@
-import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+// ============================================================
+// APP MODULE - SPaye
+// ============================================================
+
+import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
@@ -16,7 +20,11 @@ import { AppService } from './app.service';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    // ✅ ConfigModule avec isGlobal et chemin du fichier .env
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: '.env',
+    }),
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
@@ -38,8 +46,4 @@ import { AppService } from './app.service';
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule implements NestModule {
-  configure(consumer: MiddlewareConsumer) {
-    // Middleware CORS supplémentaire si nécessaire
-  }
-}
+export class AppModule {}

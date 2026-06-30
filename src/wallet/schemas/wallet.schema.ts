@@ -1,3 +1,7 @@
+// ============================================================
+// WALLET SCHEMA - SPaye
+// ============================================================
+
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 
@@ -53,7 +57,6 @@ export class Wallet {
     notificationThreshold: number;
   };
 
-  // ✅ Ajout explicite des champs timestamps pour TypeScript
   @Prop()
   createdAt?: Date;
 
@@ -63,5 +66,5 @@ export class Wallet {
 
 export const WalletSchema = SchemaFactory.createForClass(Wallet);
 
-WalletSchema.index({ userId: 1 });
+// ✅ userId est déjà unique: true via le décorateur, pas besoin d'index supplémentaire
 WalletSchema.index({ balance: -1 });

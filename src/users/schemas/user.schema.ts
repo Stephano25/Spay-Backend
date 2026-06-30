@@ -1,3 +1,7 @@
+// ============================================================
+// USER SCHEMA - SPaye
+// ============================================================
+
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 
@@ -65,7 +69,6 @@ export class User {
   @Prop({ type: Object, default: {} })
   settings: Record<string, any>;
 
-  // ✅ Ajout explicite des champs timestamps pour TypeScript
   @Prop()
   createdAt?: Date;
 
@@ -75,9 +78,8 @@ export class User {
 
 export const UserSchema = SchemaFactory.createForClass(User);
 
-UserSchema.index({ email: 1 });
-UserSchema.index({ phoneNumber: 1 });
-UserSchema.index({ qrCode: 1 });
+// ✅ Un seul index par champ (pas de duplication)
+// Les index unique: true sont déjà créés par les décorateurs
 UserSchema.index({ role: 1 });
 UserSchema.index({ isActive: 1 });
 UserSchema.index({ firstName: 'text', lastName: 'text' });
