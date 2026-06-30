@@ -35,8 +35,8 @@ RUN npm ci --only=production && \
 # Copier les fichiers buildés
 COPY --from=builder /app/dist ./dist
 
-# Copier le fichier .env.production en .env
-COPY .env.production .env
+# Copier le fichier .env.production s'il existe
+COPY .env.production .env 2>/dev/null || COPY .env .env 2>/dev/null || true
 
 # Créer le dossier uploads
 RUN mkdir -p /app/uploads && \
