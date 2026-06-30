@@ -1,3 +1,7 @@
+// ============================================================
+// CHAT MODULE - SPaye
+// ============================================================
+
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { JwtModule } from '@nestjs/jwt';
@@ -12,6 +16,8 @@ import { TransactionsModule } from '../transactions/transactions.module';
 
 @Module({
   imports: [
+    // ✅ ConfigModule est nécessaire pour lire .env
+    ConfigModule,
     MongooseModule.forFeature([
       { name: Message.name, schema: MessageSchema },
       { name: User.name, schema: UserSchema },
@@ -19,7 +25,7 @@ import { TransactionsModule } from '../transactions/transactions.module';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET') || 'your-secret-key',
+        secret: configService.get<string>('JWT_SECRET'),
         signOptions: { expiresIn: '7d' },
       }),
       inject: [ConfigService],

@@ -1,4 +1,7 @@
-// backend/src/chat/chat.gateway.ts
+// ============================================================
+// CHAT GATEWAY - SPaye
+// ============================================================
+
 import {
   WebSocketGateway,
   WebSocketServer,
@@ -10,13 +13,16 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { forwardRef, Inject } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
 import { ChatService } from './chat.service';
 import { FriendsService } from '../friends/friends.service';
-import { JwtService } from '@nestjs/jwt';
-import { ConfigService } from '@nestjs/config';
 
 @WebSocketGateway({
-  cors: { origin: '*', credentials: true },
+  cors: {
+    origin: '*',
+    credentials: true,
+  },
   namespace: '/',
 })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -33,8 +39,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   async handleConnection(client: Socket) {
     try {
-      const token = client.handshake.auth?.token ||
-        client.handshake.headers?.authorization?.replace('Bearer ', '');
+      // Récupérer le token depuis plusieurs sources
+      let token = client.handshake.auth?.token ||
+                  client.handshake.headers?.authorization?.replace('Bearer ', '');
 
       console.log(`🔌 Nouvelle connexion, token: ${token ? 'présent' : 'absent'}`);
 
@@ -45,8 +52,17 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return;
       }
 
+      // Vérifier le token avec la même clé que le module JWT
+      const secret = this.configService.get<string>('JWT_SECRET');
+      
+      if (!secret) {
+        console.error('❌ JWT_SECRET non défini dans .env');
+        client.disconnect();
+        return;
+      }
+
       const payload = this.jwtService.verify(token, {
-        secret: this.configService.get('JWT_SECRET'),
+        secret: secret,
       });
 
       const userId = payload.sub;
@@ -70,13 +86,12 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       client.join(`user_${userId}`);
       console.log(`✅ Utilisateur ${userId} connecté, socket: ${client.id}`);
 
-      // 🔥 Récupérer les amis et les notifier
+      // Récupérer les amis et les notifier
       try {
         const friends = await this.friendsService.getFriends(userId);
         console.log(`👥 ${userId} a ${friends.length} amis`);
 
         if (friends.length > 0) {
-          // 🔥 Notifier chaque ami que l'utilisateur est en ligne
           for (const f of friends) {
             const friendId = f.friendId?.toString();
             if (friendId && friendId !== userId) {
@@ -89,14 +104,12 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
               });
             }
           }
-        } else {
-          console.log(`⚠️ ${userId} n'a pas d'amis`);
         }
       } catch (error) {
         console.error('❌ Erreur lors de la récupération des amis:', error);
       }
 
-      // 🔥 Envoyer la liste des utilisateurs connectés
+      // Envoyer la liste des utilisateurs connectés
       const onlineUsers = Array.from(this.connectedUsers.keys());
       console.log(`📊 Utilisateurs connectés:`, onlineUsers);
       client.emit('onlineUsers', onlineUsers);
@@ -129,7 +142,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.connectedUsers.delete(userId);
       console.log(`❌ ${userId} complètement déconnecté`);
 
-      // 🔥 Notifier les amis que l'utilisateur est hors ligne
+      // Notifier les amis que l'utilisateur est hors ligne
       try {
         const friends = await this.friendsService.getFriends(userId);
         for (const f of friends) {
@@ -151,7 +164,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   // ============================================================
-  // 🔥 MÉTHODES UTILITAIRES
+  // MÉTHODES UTILITAIRES
   // ============================================================
 
   getOnlineUsers(): string[] {
@@ -163,7 +176,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   // ============================================================
-  // 🔥 SUBSCRIBE MESSAGES
+  // SUBSCRIBE MESSAGES
   // ============================================================
 
   @SubscribeMessage('sendMessage')

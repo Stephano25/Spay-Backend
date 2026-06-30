@@ -1,7 +1,12 @@
+// ============================================================
+// AUTH SERVICE - SPaye
+// ============================================================
+
 import { Injectable, ConflictException, UnauthorizedException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { User, UserDocument, UserRole } from '../users/schemas/user.schema';
@@ -14,6 +19,7 @@ export class AuthService {
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     private jwtService: JwtService,
+    private configService: ConfigService,
   ) {}
 
   /**
@@ -164,18 +170,25 @@ export class AuthService {
 
   /**
    * Génère un token JWT pour l'utilisateur
+   * Utilise la même clé que dans .env
    */
   private signToken(user: UserDocument): string {
-    return this.jwtService.sign({
-      sub: user._id.toString(),
-      email: user.email,
-      role: user.role,
-    });
+    const secret = this.configService.get<string>('JWT_SECRET');
+    return this.jwtService.sign(
+      {
+        sub: user._id.toString(),
+        email: user.email,
+        role: user.role,
+      },
+      {
+        secret: secret,
+        expiresIn: '7d',
+      }
+    );
   }
 
   /**
    * Génère un QR code unique pour l'utilisateur
-   * (avec plusieurs tentatives en cas de collision improbable)
    */
   private async generateUniqueQrCode(): Promise<string> {
     const maxAttempts = 5;
@@ -186,7 +199,6 @@ export class AuthService {
         return candidate;
       }
     }
-    // En cas d'échec après plusieurs tentatives, on génère un code plus long
     return `SPAYE-${crypto.randomBytes(12).toString('hex').toUpperCase()}`;
   }
 
