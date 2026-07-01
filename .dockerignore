@@ -1,47 +1,26 @@
-# Node
-node_modules/
+node_modules
 npm-debug.log
-yarn-debug.log
-yarn-error.log
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
-
-# Build
-dist/
-build/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
+dist
+build
+.git
+.gitignore
+README.md
+Dockerfile
+docker-compose.yml
+*.md
 .DS_Store
 Thumbs.db
-
-# Tests
-coverage/
-.nyc_output/
-**/*.spec.ts
-**/*.test.ts
-
-# Git
-.git/
-.gitignore
-
-# Docker
-Dockerfile
-.dockerignore
-docker-compose.yml
-docker-compose.*.yml
-
-# Logs
-logs/
+.idea
+.vscode
+coverage
+.nyc_output
+*.spec.ts
+*.test.ts
+logs
 *.log
-
-# Temp
-tmp/
-temp/
+tmp
+temp

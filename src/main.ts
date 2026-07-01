@@ -31,11 +31,11 @@ async function bootstrap() {
   const port = 3000;
   await app.listen(port, '0.0.0.0');
   
-  console.log('========================================');
+  console.log('===================================================');
   console.log('✅ Backend démarré avec succès !');
   console.log(`🌐 Accès local : http://localhost:${port}/api`);
-  console.log('========================================');
+  console.log('===================================================');
   console.log('📁 Fichiers statiques : /uploads/');
-  console.log('========================================');
+  console.log('===================================================');
 }
 bootstrap();

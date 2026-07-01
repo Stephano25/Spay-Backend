@@ -2,8 +2,6 @@
 # DOCKER COMPOSE - SPaye Backend
 # ============================================================
 
-version: '3.8'
-
 services:
   # ── MongoDB ──
   mongodb:
@@ -39,18 +37,13 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - HOST=0.0.0.0
       - MONGODB_URI=mongodb://admin:spaye2024@mongodb:27017/spaye?authSource=admin
-      - JWT_SECRET=spaye-production-super-secret-key-change-this
+      - JWT_SECRET=spaye-production-super-secret-key-2024
       - JWT_EXPIRES_IN=7d
       - UPLOAD_DIR=./uploads
       - MAX_FILE_SIZE=157286400
-      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
-      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
-      - GOOGLE_CALLBACK_URL=http://localhost:3000/api/auth/google/callback
-      - FRONTEND_URL=http://localhost:4200
-      - CORS_ORIGIN=http://localhost:4200
-      - SOCKET_IO_CORS_ORIGIN=http://localhost:4200
+      - FRONTEND_URL=http://localhost
+      - CORS_ORIGIN=http://localhost,http://localhost:4200
     volumes:
       - uploads:/app/uploads
     depends_on:
@@ -58,20 +51,13 @@ services:
         condition: service_healthy
     networks:
       - spaye-network
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "http://localhost:3000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
-# ── Volumes ──
 volumes:
   mongo-data:
     driver: local
   uploads:
     driver: local
 
-# ── Networks ──
 networks:
   spaye-network:
     driver: bridge

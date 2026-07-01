@@ -1,5 +1,5 @@
 # ============================================================
-# DOCKERFILE - SPaye Backend (NestJS)
+# DOCKERFILE - SPaye Backend (Version Finale)
 # ============================================================
 
 # Étape 1: Build
@@ -7,13 +7,11 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copier les fichiers de dépendances
+# Copier les dépendances
 COPY package*.json ./
-COPY package-lock.json ./
 
-# Installer les dépendances
-RUN npm ci && \
-    npm cache clean --force
+# ✅ Utiliser npm install au lieu de npm ci
+RUN npm install && npm cache clean --force
 
 # Copier le code source
 COPY . .
@@ -28,19 +26,15 @@ WORKDIR /app
 
 # Installer les dépendances de production uniquement
 COPY package*.json ./
-COPY package-lock.json ./
-RUN npm ci --only=production && \
-    npm cache clean --force
+
+# ✅ Utiliser npm install --only=production
+RUN npm install --only=production && npm cache clean --force
 
 # Copier les fichiers buildés
 COPY --from=builder /app/dist ./dist
 
-# Copier le fichier .env.production s'il existe
-COPY .env.production .env 2>/dev/null || COPY .env .env 2>/dev/null || true
-
 # Créer le dossier uploads
-RUN mkdir -p /app/uploads && \
-    chown -R node:node /app
+RUN mkdir -p /app/uploads
 
 # Utilisateur non-root
 USER node
