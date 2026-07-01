@@ -1,4 +1,5 @@
-import { Controller, Get, UseGuards, Patch, Param, Body, Delete, Post, HttpCode, HttpStatus } from '@nestjs/common';
+// backend/src/admin/admin.controller.ts
+import { Controller, Get, UseGuards, Patch, Param, Body, Delete, Post, HttpCode, HttpStatus, Req } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -10,10 +11,18 @@ import { Roles } from '../auth/decorators/roles.decorator';
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
 
+  // ============================================================
+  // DASHBOARD
+  // ============================================================
+
   @Get('dashboard/stats')
   async getDashboardStats() {
     return this.adminService.getDashboardStats();
   }
+
+  // ============================================================
+  // UTILISATEURS
+  // ============================================================
 
   @Get('users')
   async getAllUsers() {
@@ -23,16 +32,6 @@ export class AdminController {
   @Get('users/:userId')
   async getUserById(@Param('userId') userId: string) {
     return this.adminService.getUserById(userId);
-  }
-
-  @Get('transactions')
-  async getAllTransactions() {
-    return this.adminService.getAllTransactions();
-  }
-
-  @Get('transactions/:transactionId')
-  async getTransactionById(@Param('transactionId') transactionId: string) {
-    return this.adminService.getTransactionById(transactionId);
   }
 
   @Patch('users/:userId/status')
@@ -56,6 +55,66 @@ export class AdminController {
     return this.adminService.deleteUser(userId);
   }
 
+  // ✅ DÉPÔT D'ARGENT
+  @Post('users/:userId/deposit')
+  async depositMoney(
+    @Param('userId') userId: string,
+    @Body('amount') amount: number,
+    @Body('description') description?: string
+  ) {
+    return this.adminService.depositMoney(userId, amount, description);
+  }
+
+  // ============================================================
+  // ADMINISTRATEURS
+  // ============================================================
+
+  @Post('admins')
+  async createAdmin(
+    @Body() adminData: {
+      email: string;
+      password: string;
+      firstName: string;
+      lastName: string;
+      phoneNumber?: string;
+      role?: 'admin' | 'super_admin';
+    }
+  ) {
+    return this.adminService.createAdmin(adminData);
+  }
+
+  @Get('admins')
+  async getAdmins() {
+    return this.adminService.getAdmins();
+  }
+
+  @Delete('admins/:adminId')
+  async deleteAdmin(
+    @Param('adminId') adminId: string,
+    @Req() req: any
+  ) {
+    const currentAdminId = req.user.userId;
+    return this.adminService.deleteAdmin(adminId, currentAdminId);
+  }
+
+  // ============================================================
+  // TRANSACTIONS
+  // ============================================================
+
+  @Get('transactions')
+  async getAllTransactions() {
+    return this.adminService.getAllTransactions();
+  }
+
+  @Get('transactions/:transactionId')
+  async getTransactionById(@Param('transactionId') transactionId: string) {
+    return this.adminService.getTransactionById(transactionId);
+  }
+
+  // ============================================================
+  // PARAMÈTRES
+  // ============================================================
+
   @Get('settings')
   async getSettings() {
     return this.adminService.getSettings();
@@ -65,6 +124,10 @@ export class AdminController {
   async updateSettings(@Body() settings: any) {
     return this.adminService.updateSettings(settings);
   }
+
+  // ============================================================
+  // SYSTÈME
+  // ============================================================
 
   @Get('system/logs')
   async getSystemLogs() {

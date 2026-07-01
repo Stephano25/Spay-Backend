@@ -1,9 +1,4 @@
-# ============================================================
-# DOCKER COMPOSE - SPaye Backend
-# ============================================================
-
 services:
-  # ── MongoDB ──
   mongodb:
     image: mongo:7.0
     container_name: spaye-mongodb
@@ -25,7 +20,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── Backend NestJS ──
   backend:
     build:
       context: .
@@ -44,11 +38,9 @@ services:
       - MAX_FILE_SIZE=157286400
       - FRONTEND_URL=http://localhost
       - CORS_ORIGIN=http://localhost,http://localhost:4200
-      # ✅ AJOUTER CES LIGNES
       - GOOGLE_CLIENT_ID=395910776421-rakkus38k5jjjeg1oi1hs1pfusv57tl8.apps.googleusercontent.com
       - GOOGLE_CLIENT_SECRET=GOCSPX-MON-SECRET
       - GOOGLE_CALLBACK_URL=http://localhost:3000/api/auth/google/callback
-
     volumes:
       - uploads:/app/uploads
     depends_on:
@@ -63,6 +55,7 @@ volumes:
   uploads:
     driver: local
 
+# ✅ Utiliser le même réseau externe
 networks:
   spaye-network:
-    driver: bridge
+    external: true
