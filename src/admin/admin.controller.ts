@@ -55,7 +55,7 @@ export class AdminController {
     return this.adminService.deleteUser(userId);
   }
 
-  // ✅ DÉPÔT D'ARGENT
+  // ✅ DÉPÔT
   @Post('users/:userId/deposit')
   async depositMoney(
     @Param('userId') userId: string,
@@ -63,6 +63,16 @@ export class AdminController {
     @Body('description') description?: string
   ) {
     return this.adminService.depositMoney(userId, amount, description);
+  }
+
+  // ✅ RETRAIT
+  @Post('users/:userId/withdraw')
+  async withdrawMoney(
+    @Param('userId') userId: string,
+    @Body('amount') amount: number,
+    @Body('description') description?: string
+  ) {
+    return this.adminService.withdrawMoney(userId, amount, description);
   }
 
   // ============================================================
