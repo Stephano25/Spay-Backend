@@ -16,7 +16,7 @@ import { ChatModule } from '../chat/chat.module';
       { name: Setting.name, schema: SettingSchema },
       { name: Log.name, schema: LogSchema },
     ]),
-    forwardRef(() => ChatModule), // Évite la dépendance circulaire
+    forwardRef(() => ChatModule),
   ],
   controllers: [AdminController],
   providers: [AdminService],

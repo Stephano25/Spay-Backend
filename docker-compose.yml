@@ -55,7 +55,6 @@ volumes:
   uploads:
     driver: local
 
-# ✅ Utiliser le même réseau externe
 networks:
   spaye-network:
     external: true

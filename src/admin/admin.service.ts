@@ -1,9 +1,18 @@
-// backend/src/admin/admin.service.ts
-import { Injectable, NotFoundException, Inject, forwardRef, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  Inject,
+  forwardRef,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { User, UserDocument, UserRole } from '../users/schemas/user.schema';
-import { Transaction, TransactionDocument, TransactionStatus } from '../transactions/schemas/transaction.schema';
+import {
+  Transaction,
+  TransactionDocument,
+  TransactionStatus,
+} from '../transactions/schemas/transaction.schema';
 import { Setting, SettingDocument } from '../settings/schemas/setting.schema';
 import { Log, LogDocument } from '../logs/schemas/log.schema';
 import { ChatGateway } from '../chat/chat.gateway';
@@ -21,7 +30,7 @@ export class AdminService {
   ) {}
 
   // ============================================================
-  // DASHBOARD
+  // DASHBOARD - Statistiques complètes
   // ============================================================
   async getDashboardStats() {
     const [totalUsers, totalTransactions] = await Promise.all([
@@ -31,8 +40,6 @@ export class AdminService {
 
     const onlineUserIds = this.chatGateway.getOnlineUsers();
     const activeUsers = onlineUserIds.length;
-
-    console.log(`📊 Utilisateurs en ligne : ${activeUsers} (${onlineUserIds.join(', ')})`);
 
     const volumeResult = await this.transactionModel.aggregate([
       { $match: { status: TransactionStatus.COMPLETED } },
@@ -101,7 +108,10 @@ export class AdminService {
   // UTILISATEURS
   // ============================================================
   async getAllUsers() {
-    const users = await this.userModel.find().select('-password').sort({ createdAt: -1 });
+    const users = await this.userModel
+      .find()
+      .select('-password')
+      .sort({ createdAt: -1 });
     return users.map((u) => this.toUserResponse(u));
   }
 
@@ -118,11 +128,9 @@ export class AdminService {
     if (!Types.ObjectId.isValid(userId)) {
       throw new NotFoundException('ID utilisateur invalide');
     }
-    const user = await this.userModel.findByIdAndUpdate(
-      userId,
-      { isActive },
-      { new: true },
-    ).select('-password');
+    const user = await this.userModel
+      .findByIdAndUpdate(userId, { isActive }, { new: true })
+      .select('-password');
     if (!user) throw new NotFoundException('Utilisateur non trouvé');
     return this.toUserResponse(user);
   }
@@ -135,11 +143,9 @@ export class AdminService {
     if (!validRoles.includes(role)) {
       throw new NotFoundException(`Rôle invalide : ${role}`);
     }
-    const user = await this.userModel.findByIdAndUpdate(
-      userId,
-      { role },
-      { new: true },
-    ).select('-password');
+    const user = await this.userModel
+      .findByIdAndUpdate(userId, { role }, { new: true })
+      .select('-password');
     if (!user) throw new NotFoundException('Utilisateur non trouvé');
     return this.toUserResponse(user);
   }
@@ -151,6 +157,250 @@ export class AdminService {
     const user = await this.userModel.findByIdAndDelete(userId);
     if (!user) throw new NotFoundException('Utilisateur non trouvé');
     return { message: 'Utilisateur supprimé avec succès' };
+  }
+
+  // ============================================================
+  // ADMIN ACTIONS - DÉPÔT (COMPLET)
+  // ============================================================
+  async depositMoney(userId: string, amount: number, description?: string) {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new NotFoundException('ID utilisateur invalide');
+    }
+
+    if (amount <= 0) {
+      throw new BadRequestException('Le montant doit être supérieur à 0');
+    }
+
+    const user = await this.userModel.findById(userId);
+    if (!user) {
+      throw new NotFoundException('Utilisateur non trouvé');
+    }
+
+    user.balance += amount;
+    await user.save();
+
+    const transaction = await this.transactionModel.create({
+      senderId: null,
+      receiverId: user._id,
+      type: 'deposit',
+      amount: amount,
+      fee: 0,
+      totalAmount: amount,
+      status: TransactionStatus.COMPLETED,
+      description: description || `Dépôt administrateur`,
+      reference: `ADMIN-DEP-${Date.now()}`,
+      paymentMethod: 'admin',
+      metadata: { adminAction: true },
+    });
+
+    await this.logModel.create({
+      level: 'info',
+      message: `Dépôt de ${amount} Ar effectué sur le compte de ${user.email} par l'administrateur`,
+      userId: userId,
+      date: new Date(),
+      metadata: { amount, description },
+    });
+
+    // 🔥 Notifier l'utilisateur en temps réel
+    this.chatGateway?.notifyUser(userId, 'balanceUpdate', {
+      newBalance: user.balance,
+      amount,
+      type: 'deposit',
+    });
+
+    return {
+      success: true,
+      message: `Dépôt de ${amount} Ar effectué avec succès`,
+      newBalance: user.balance,
+      transaction: this.toTransactionResponse(transaction),
+    };
+  }
+
+  // ============================================================
+  // ADMIN ACTIONS - RETRAIT (COMPLET)
+  // ============================================================
+  async withdrawMoney(userId: string, amount: number, description?: string) {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new NotFoundException('ID utilisateur invalide');
+    }
+
+    if (amount <= 0) {
+      throw new BadRequestException('Le montant doit être supérieur à 0');
+    }
+
+    const user = await this.userModel.findById(userId);
+    if (!user) {
+      throw new NotFoundException('Utilisateur non trouvé');
+    }
+
+    if (user.balance < amount) {
+      throw new BadRequestException('Solde insuffisant');
+    }
+
+    user.balance -= amount;
+    await user.save();
+
+    const transaction = await this.transactionModel.create({
+      senderId: user._id,
+      receiverId: null,
+      type: 'withdrawal',
+      amount: amount,
+      fee: 0,
+      totalAmount: amount,
+      status: TransactionStatus.COMPLETED,
+      description: description || `Retrait administrateur`,
+      reference: `ADMIN-WTH-${Date.now()}`,
+      paymentMethod: 'admin',
+      metadata: { adminAction: true },
+    });
+
+    await this.logModel.create({
+      level: 'info',
+      message: `Retrait de ${amount} Ar effectué sur le compte de ${user.email} par l'administrateur`,
+      userId: userId,
+      date: new Date(),
+      metadata: { amount, description },
+    });
+
+    // 🔥 Notifier l'utilisateur en temps réel
+    this.chatGateway?.notifyUser(userId, 'balanceUpdate', {
+      newBalance: user.balance,
+      amount,
+      type: 'withdrawal',
+    });
+
+    return {
+      success: true,
+      message: `Retrait de ${amount} Ar effectué avec succès`,
+      newBalance: user.balance,
+      transaction: this.toTransactionResponse(transaction),
+    };
+  }
+
+  // ============================================================
+  // ADMIN ACTIONS - GESTION DES ADMINISTRATEURS
+  // ============================================================
+  async createAdmin(adminData: {
+    email: string;
+    password: string;
+    firstName: string;
+    lastName: string;
+    phoneNumber?: string;
+    role?: 'admin' | 'super_admin';
+  }) {
+    const existingUser = await this.userModel.findOne({
+      email: adminData.email.toLowerCase(),
+    });
+    if (existingUser) {
+      throw new BadRequestException('Cet email est déjà utilisé');
+    }
+
+    const hashedPassword = await bcrypt.hash(adminData.password, 10);
+    const qrCode = await this.generateUniqueQrCode();
+
+    const newAdmin = new this.userModel({
+      email: adminData.email.toLowerCase(),
+      password: hashedPassword,
+      firstName: adminData.firstName,
+      lastName: adminData.lastName,
+      phoneNumber: adminData.phoneNumber,
+      qrCode,
+      balance: 0,
+      role: adminData.role || 'admin',
+      isActive: true,
+      isGoogleUser: false,
+      createdAt: new Date(),
+    });
+
+    await newAdmin.save();
+
+    await this.logModel.create({
+      level: 'info',
+      message: `Nouvel administrateur créé : ${adminData.email} (${
+        adminData.role || 'admin'
+      })`,
+      date: new Date(),
+      metadata: { email: adminData.email, role: adminData.role || 'admin' },
+    });
+
+    return {
+      success: true,
+      message: 'Administrateur créé avec succès',
+      user: this.toUserResponse(newAdmin),
+    };
+  }
+
+  async getAdmins() {
+    const admins = await this.userModel
+      .find({
+        $or: [{ role: 'admin' }, { role: 'super_admin' }],
+      })
+      .select('-password')
+      .sort({ createdAt: -1 });
+
+    return admins.map((u) => this.toUserResponse(u));
+  }
+
+  async deleteAdmin(adminId: string, currentAdminId: string) {
+    if (adminId === currentAdminId) {
+      throw new BadRequestException(
+        'Vous ne pouvez pas vous supprimer vous-même',
+      );
+    }
+
+    if (!Types.ObjectId.isValid(adminId)) {
+      throw new NotFoundException('ID invalide');
+    }
+
+    const admin = await this.userModel.findById(adminId);
+    if (!admin) {
+      throw new NotFoundException('Administrateur non trouvé');
+    }
+
+    if (admin.role !== 'admin' && admin.role !== 'super_admin') {
+      throw new BadRequestException(
+        "Cet utilisateur n'est pas un administrateur",
+      );
+    }
+
+    await this.userModel.findByIdAndDelete(adminId);
+
+    await this.logModel.create({
+      level: 'info',
+      message: `Administrateur supprimé : ${admin.email}`,
+      date: new Date(),
+      metadata: { deletedAdmin: admin.email },
+    });
+
+    return {
+      success: true,
+      message: 'Administrateur supprimé avec succès',
+    };
+  }
+
+  // ============================================================
+  // PROFIL ADMIN
+  // ============================================================
+  async getAdminProfile(userId: string) {
+    const user = await this.userModel.findById(userId).select('-password');
+    if (!user) throw new NotFoundException('Administrateur non trouvé');
+    return this.toUserResponse(user);
+  }
+
+  async updateAdminProfile(userId: string, updateData: any) {
+    const allowedFields = ['firstName', 'lastName', 'email', 'phoneNumber', 'bio'];
+    const sanitized: any = {};
+    for (const field of allowedFields) {
+      if (updateData[field] !== undefined) {
+        sanitized[field] = updateData[field];
+      }
+    }
+
+    const user = await this.userModel
+      .findByIdAndUpdate(userId, sanitized, { new: true })
+      .select('-password');
+    if (!user) throw new NotFoundException('Administrateur non trouvé');
+    return this.toUserResponse(user);
   }
 
   // ============================================================
@@ -251,7 +501,9 @@ export class AdminService {
 
     let databaseSize = 'Calcul en cours...';
     try {
-      const estimatedSize = Math.round((totalUsers * 500 + totalTransactions * 200) / 1024 / 1024);
+      const estimatedSize = Math.round(
+        (totalUsers * 500 + totalTransactions * 200) / 1024 / 1024,
+      );
       databaseSize = `${estimatedSize} MB`;
     } catch {
       databaseSize = 'Non disponible';
@@ -279,212 +531,8 @@ export class AdminService {
   }
 
   // ============================================================
-  // ADMIN ACTIONS - DÉPÔT
-  // ============================================================
-
-  async depositMoney(userId: string, amount: number, description?: string) {
-    if (!Types.ObjectId.isValid(userId)) {
-      throw new NotFoundException('ID utilisateur invalide');
-    }
-
-    if (amount <= 0) {
-      throw new BadRequestException('Le montant doit être supérieur à 0');
-    }
-
-    const user = await this.userModel.findById(userId);
-    if (!user) {
-      throw new NotFoundException('Utilisateur non trouvé');
-    }
-
-    user.balance += amount;
-    await user.save();
-
-    const transaction = await this.transactionModel.create({
-      senderId: null,
-      receiverId: user._id,
-      type: 'deposit',
-      amount: amount,
-      fee: 0,
-      totalAmount: amount,
-      status: TransactionStatus.COMPLETED,
-      description: description || `Dépôt administrateur`,
-      reference: `ADMIN-DEP-${Date.now()}`,
-      paymentMethod: 'admin',
-      metadata: { adminAction: true }
-    });
-
-    await this.logModel.create({
-      level: 'info',
-      message: `Dépôt de ${amount} Ar effectué sur le compte de ${user.email} par l'administrateur`,
-      userId: userId,
-      date: new Date(),
-      metadata: { amount, description }
-    });
-
-    return {
-      success: true,
-      message: `Dépôt de ${amount} Ar effectué avec succès`,
-      newBalance: user.balance,
-      transaction: this.toTransactionResponse(transaction)
-    };
-  }
-
-  // ============================================================
-  // ADMIN ACTIONS - RETRAIT
-  // ============================================================
-
-  async withdrawMoney(userId: string, amount: number, description?: string) {
-    if (!Types.ObjectId.isValid(userId)) {
-      throw new NotFoundException('ID utilisateur invalide');
-    }
-
-    if (amount <= 0) {
-      throw new BadRequestException('Le montant doit être supérieur à 0');
-    }
-
-    const user = await this.userModel.findById(userId);
-    if (!user) {
-      throw new NotFoundException('Utilisateur non trouvé');
-    }
-
-    if (user.balance < amount) {
-      throw new BadRequestException('Solde insuffisant');
-    }
-
-    user.balance -= amount;
-    await user.save();
-
-    const transaction = await this.transactionModel.create({
-      senderId: user._id,
-      receiverId: null,
-      type: 'withdrawal',
-      amount: amount,
-      fee: 0,
-      totalAmount: amount,
-      status: TransactionStatus.COMPLETED,
-      description: description || `Retrait administrateur`,
-      reference: `ADMIN-WTH-${Date.now()}`,
-      paymentMethod: 'admin',
-      metadata: { adminAction: true }
-    });
-
-    await this.logModel.create({
-      level: 'info',
-      message: `Retrait de ${amount} Ar effectué sur le compte de ${user.email} par l'administrateur`,
-      userId: userId,
-      date: new Date(),
-      metadata: { amount, description }
-    });
-
-    return {
-      success: true,
-      message: `Retrait de ${amount} Ar effectué avec succès`,
-      newBalance: user.balance,
-      transaction: this.toTransactionResponse(transaction)
-    };
-  }
-
-  // ============================================================
-  // ADMIN ACTIONS - GESTION DES ADMINISTRATEURS
-  // ============================================================
-
-  async createAdmin(adminData: {
-    email: string;
-    password: string;
-    firstName: string;
-    lastName: string;
-    phoneNumber?: string;
-    role?: 'admin' | 'super_admin';
-  }) {
-    const existingUser = await this.userModel.findOne({ email: adminData.email.toLowerCase() });
-    if (existingUser) {
-      throw new BadRequestException('Cet email est déjà utilisé');
-    }
-
-    const hashedPassword = await bcrypt.hash(adminData.password, 10);
-    const qrCode = await this.generateUniqueQrCode();
-
-    const newAdmin = new this.userModel({
-      email: adminData.email.toLowerCase(),
-      password: hashedPassword,
-      firstName: adminData.firstName,
-      lastName: adminData.lastName,
-      phoneNumber: adminData.phoneNumber,
-      qrCode,
-      balance: 0,
-      role: adminData.role || 'admin',
-      isActive: true,
-      isGoogleUser: false,
-      createdAt: new Date(),
-    });
-
-    await newAdmin.save();
-
-    await this.logModel.create({
-      level: 'info',
-      message: `Nouvel administrateur créé : ${adminData.email} (${adminData.role || 'admin'})`,
-      date: new Date(),
-      metadata: { email: adminData.email, role: adminData.role || 'admin' }
-    });
-
-    return {
-      success: true,
-      message: 'Administrateur créé avec succès',
-      user: this.toUserResponse(newAdmin)
-    };
-  }
-
-  async getAdmins() {
-    const admins = await this.userModel
-      .find({ 
-        $or: [
-          { role: 'admin' },
-          { role: 'super_admin' }
-        ]
-      })
-      .select('-password')
-      .sort({ createdAt: -1 });
-
-    return admins.map((u) => this.toUserResponse(u));
-  }
-
-  async deleteAdmin(adminId: string, currentAdminId: string) {
-    if (adminId === currentAdminId) {
-      throw new BadRequestException('Vous ne pouvez pas vous supprimer vous-même');
-    }
-
-    if (!Types.ObjectId.isValid(adminId)) {
-      throw new NotFoundException('ID invalide');
-    }
-
-    const admin = await this.userModel.findById(adminId);
-    if (!admin) {
-      throw new NotFoundException('Administrateur non trouvé');
-    }
-
-    if (admin.role !== 'admin' && admin.role !== 'super_admin') {
-      throw new BadRequestException('Cet utilisateur n\'est pas un administrateur');
-    }
-
-    await this.userModel.findByIdAndDelete(adminId);
-
-    await this.logModel.create({
-      level: 'info',
-      message: `Administrateur supprimé : ${admin.email}`,
-      date: new Date(),
-      metadata: { deletedAdmin: admin.email }
-    });
-
-    return {
-      success: true,
-      message: 'Administrateur supprimé avec succès'
-    };
-  }
-
-  // ============================================================
   // HELPERS PRIVÉS
   // ============================================================
-
   private toUserResponse(user: UserDocument) {
     return {
       id: user._id.toString(),
@@ -510,7 +558,7 @@ export class AdminService {
       status: tx.status,
       description: tx.description,
       reference: tx.reference,
-      createdAt: tx.createdAt
+      createdAt: tx.createdAt,
     };
   }
 
@@ -527,7 +575,14 @@ export class AdminService {
       const d = new Date();
       d.setDate(d.getDate() - i);
       const start = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-      const end = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59);
+      const end = new Date(
+        d.getFullYear(),
+        d.getMonth(),
+        d.getDate(),
+        23,
+        59,
+        59,
+      );
 
       const [users, transactions] = await Promise.all([
         this.userModel.countDocuments({ createdAt: { $gte: start, $lte: end } }),
