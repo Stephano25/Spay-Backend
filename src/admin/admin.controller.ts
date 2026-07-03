@@ -11,6 +11,7 @@ import {
   HttpStatus,
   Req,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -21,14 +22,36 @@ import { Roles } from '../auth/decorators/roles.decorator';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('admin', 'super_admin')
 export class AdminController {
+  private readonly logger = new Logger(AdminController.name);
+
   constructor(private readonly adminService: AdminService) {}
 
   // ============================================================
-  // DASHBOARD - Statistiques complètes
+  // DASHBOARD - Statistiques (selon le rôle)
   // ============================================================
   @Get('dashboard/stats')
-  async getDashboardStats() {
-    return this.adminService.getDashboardStats();
+  async getDashboardStats(@Req() req: any) {
+    try {
+      const userId = req.user.userId;
+      const userRole = req.user.role;
+      this.logger.log(`📊 Récupération des stats pour ${userRole} (${userId})`);
+      const stats = await this.adminService.getDashboardStats(userId, userRole);
+      return stats;
+    } catch (error) {
+      this.logger.error('❌ Erreur dashboard stats:', error);
+      return {
+        totalUsers: 0,
+        activeUsers: 0,
+        totalTransactions: 0,
+        totalVolume: 0,
+        recentUsers: [],
+        recentTransactions: [],
+        dailyStats: [],
+        topUsers: [],
+        totalAdmins: 0,
+        totalSuperAdmins: 0,
+      };
+    }
   }
 
   // ============================================================
@@ -66,13 +89,14 @@ export class AdminController {
   }
 
   // ============================================================
-  // ADMIN ACTIONS - DÉPÔT (COMPLET)
+  // ADMIN ACTIONS - DÉPÔT (pour tous les admins)
   // ============================================================
   @Post('users/:userId/deposit')
   async depositMoney(
     @Param('userId') userId: string,
     @Body('amount') amount: number,
     @Body('description') description?: string,
+    @Body('qrCode') qrCode?: string,
   ) {
     if (!userId) {
       throw new BadRequestException('ID utilisateur requis');
@@ -80,17 +104,18 @@ export class AdminController {
     if (!amount || amount <= 0) {
       throw new BadRequestException('Montant invalide');
     }
-    return this.adminService.depositMoney(userId, amount, description);
+    return this.adminService.depositMoney(userId, amount, description, qrCode);
   }
 
   // ============================================================
-  // ADMIN ACTIONS - RETRAIT (COMPLET)
+  // ADMIN ACTIONS - RETRAIT (pour tous les admins)
   // ============================================================
   @Post('users/:userId/withdraw')
   async withdrawMoney(
     @Param('userId') userId: string,
     @Body('amount') amount: number,
     @Body('description') description?: string,
+    @Body('qrCode') qrCode?: string,
   ) {
     if (!userId) {
       throw new BadRequestException('ID utilisateur requis');
@@ -98,13 +123,33 @@ export class AdminController {
     if (!amount || amount <= 0) {
       throw new BadRequestException('Montant invalide');
     }
-    return this.adminService.withdrawMoney(userId, amount, description);
+    return this.adminService.withdrawMoney(userId, amount, description, qrCode);
   }
 
   // ============================================================
-  // ADMINISTRATEURS - CRUD COMPLET
+  // ADMIN ACTIONS - QR CODE POUR DÉPÔT/RETRAIT
+  // ============================================================
+  @Post('generate-qr')
+  async generateQRCode(
+    @Req() req: any,
+    @Body('type') type: 'deposit' | 'withdraw',
+    @Body('amount') amount?: number,
+  ) {
+    const adminId = req.user.userId;
+    return this.adminService.generateQRCode(adminId, type, amount);
+  }
+
+  @Post('scan-qr')
+  async scanQRCode(@Req() req: any, @Body('qrData') qrData: string) {
+    const adminId = req.user.userId;
+    return this.adminService.scanQRCode(adminId, qrData);
+  }
+
+  // ============================================================
+  // ADMINISTRATEURS - CRUD (UNIQUEMENT SUPER_ADMIN)
   // ============================================================
   @Post('admins')
+  @Roles('super_admin')
   async createAdmin(
     @Body()
     adminData: {
@@ -120,11 +165,13 @@ export class AdminController {
   }
 
   @Get('admins')
+  @Roles('super_admin')
   async getAdmins() {
     return this.adminService.getAdmins();
   }
 
   @Delete('admins/:adminId')
+  @Roles('super_admin')
   async deleteAdmin(@Param('adminId') adminId: string, @Req() req: any) {
     const currentAdminId = req.user.userId;
     return this.adminService.deleteAdmin(adminId, currentAdminId);
@@ -157,7 +204,7 @@ export class AdminController {
   }
 
   // ============================================================
-  // SYSTÈME - LOGS & STATS
+  // SYSTÈME
   // ============================================================
   @Get('system/logs')
   async getSystemLogs() {

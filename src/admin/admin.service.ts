@@ -18,6 +18,7 @@ import { Log, LogDocument } from '../logs/schemas/log.schema';
 import { ChatGateway } from '../chat/chat.gateway';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
+import * as QRCode from 'qrcode';
 
 @Injectable()
 export class AdminService {
@@ -30,78 +31,151 @@ export class AdminService {
   ) {}
 
   // ============================================================
-  // DASHBOARD - Statistiques complètes
+  // DASHBOARD - Statistiques selon le rôle
   // ============================================================
-  async getDashboardStats() {
-    const [totalUsers, totalTransactions] = await Promise.all([
-      this.userModel.countDocuments(),
-      this.transactionModel.countDocuments(),
-    ]);
+  async getDashboardStats(userId: string, userRole: string) {
+    try {
+      const [totalUsers, totalTransactions] = await Promise.all([
+        this.userModel.countDocuments(),
+        this.transactionModel.countDocuments(),
+      ]);
 
-    const onlineUserIds = this.chatGateway.getOnlineUsers();
-    const activeUsers = onlineUserIds.length;
+      const onlineUserIds = this.chatGateway.getOnlineUsers();
+      const activeUsers = onlineUserIds.length;
 
-    const volumeResult = await this.transactionModel.aggregate([
-      { $match: { status: TransactionStatus.COMPLETED } },
-      { $group: { _id: null, total: { $sum: '$amount' } } },
-    ]);
-    const totalVolume = volumeResult[0]?.total || 0;
+      const volumeResult = await this.transactionModel.aggregate([
+        { $match: { status: TransactionStatus.COMPLETED } },
+        { $group: { _id: null, total: { $sum: '$amount' } } },
+      ]);
+      const totalVolume = volumeResult[0]?.total || 0;
 
-    const recentUsers = await this.userModel
-      .find()
-      .sort({ createdAt: -1 })
-      .limit(5)
-      .select('firstName lastName email isActive createdAt')
-      .lean();
+      const recentUsers = await this.userModel
+        .find()
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .select('firstName lastName email isActive createdAt')
+        .lean();
 
-    const recentTransactions = await this.transactionModel
-      .find()
-      .sort({ createdAt: -1 })
-      .limit(5)
-      .populate('senderId', 'firstName lastName email')
-      .populate('receiverId', 'firstName lastName email')
-      .lean();
+      const recentTransactions = await this.transactionModel
+        .find()
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .populate('senderId', 'firstName lastName email')
+        .populate('receiverId', 'firstName lastName email')
+        .lean();
 
-    const dailyStats = await this.buildDailyStats();
-    const topUsers = await this.buildTopUsers();
+      const dailyStats = await this.buildDailyStats();
+      const topUsers = await this.buildTopUsers();
 
-    return {
-      totalUsers,
-      activeUsers,
-      totalTransactions,
-      totalVolume,
-      recentUsers: recentUsers.map((u: any) => ({
-        id: u._id.toString(),
-        firstName: u.firstName,
-        lastName: u.lastName,
-        email: u.email,
-        isActive: u.isActive,
-        createdAt: u.createdAt,
-      })),
-      recentTransactions: recentTransactions.map((t: any) => ({
-        id: t._id.toString(),
-        type: t.type,
-        amount: t.amount,
-        status: t.status,
-        createdAt: t.createdAt,
-        sender: t.senderId
-          ? {
-              firstName: (t.senderId as any).firstName,
-              lastName: (t.senderId as any).lastName,
-              email: (t.senderId as any).email,
-            }
-          : null,
-        receiver: t.receiverId
-          ? {
-              firstName: (t.receiverId as any).firstName,
-              lastName: (t.receiverId as any).lastName,
-              email: (t.receiverId as any).email,
-            }
-          : null,
-      })),
-      dailyStats,
-      topUsers,
-    };
+      // Stats pour Super Admin (globales)
+      let totalAdmins = 0;
+      let totalSuperAdmins = 0;
+      let adminTransactions = 0;
+      let adminVolume = 0;
+
+      if (userRole === 'super_admin') {
+        totalAdmins = await this.userModel.countDocuments({ role: 'admin' });
+        totalSuperAdmins = await this.userModel.countDocuments({ role: 'super_admin' });
+
+        const adminTxResult = await this.transactionModel.aggregate([
+          {
+            $match: {
+              status: TransactionStatus.COMPLETED,
+              'metadata.adminAction': true,
+            },
+          },
+          { $group: { _id: null, total: { $sum: '$amount' } } },
+        ]);
+        adminVolume = adminTxResult[0]?.total || 0;
+        adminTransactions = await this.transactionModel.countDocuments({
+          'metadata.adminAction': true,
+        });
+      }
+
+      // Stats pour l'admin simple (ses propres transactions)
+      let myAdminTransactions = 0;
+      let myAdminVolume = 0;
+      if (userRole === 'admin') {
+        const myTxResult = await this.transactionModel.aggregate([
+          {
+            $match: {
+              status: TransactionStatus.COMPLETED,
+              'metadata.adminId': new Types.ObjectId(userId),
+            },
+          },
+          { $group: { _id: null, total: { $sum: '$amount' } } },
+        ]);
+        myAdminVolume = myTxResult[0]?.total || 0;
+        myAdminTransactions = await this.transactionModel.countDocuments({
+          'metadata.adminId': new Types.ObjectId(userId),
+        });
+      }
+
+      return {
+        totalUsers,
+        activeUsers,
+        totalTransactions,
+        totalVolume,
+        recentUsers: recentUsers.map((u: any) => ({
+          id: u._id.toString(),
+          firstName: u.firstName,
+          lastName: u.lastName,
+          email: u.email,
+          isActive: u.isActive,
+          createdAt: u.createdAt,
+        })),
+        recentTransactions: recentTransactions.map((t: any) => ({
+          id: t._id.toString(),
+          type: t.type,
+          amount: t.amount,
+          status: t.status,
+          createdAt: t.createdAt,
+          sender: t.senderId
+            ? {
+                firstName: (t.senderId as any).firstName,
+                lastName: (t.senderId as any).lastName,
+                email: (t.senderId as any).email,
+              }
+            : null,
+          receiver: t.receiverId
+            ? {
+                firstName: (t.receiverId as any).firstName,
+                lastName: (t.receiverId as any).lastName,
+                email: (t.receiverId as any).email,
+              }
+            : null,
+        })),
+        dailyStats,
+        topUsers,
+        // Stats supplémentaires selon le rôle
+        totalAdmins,
+        totalSuperAdmins,
+        adminTransactions,
+        adminVolume,
+        myAdminTransactions,
+        myAdminVolume,
+        userRole,
+      };
+    } catch (error) {
+      console.error('❌ Erreur getDashboardStats:', error);
+      return {
+        totalUsers: 0,
+        activeUsers: 0,
+        totalTransactions: 0,
+        totalVolume: 0,
+        recentUsers: [],
+        recentTransactions: [],
+        dailyStats: [],
+        topUsers: [],
+        totalAdmins: 0,
+        totalSuperAdmins: 0,
+        adminTransactions: 0,
+        adminVolume: 0,
+        myAdminTransactions: 0,
+        myAdminVolume: 0,
+        userRole,
+      };
+    }
   }
 
   // ============================================================
@@ -160,9 +234,14 @@ export class AdminService {
   }
 
   // ============================================================
-  // ADMIN ACTIONS - DÉPÔT (COMPLET)
+  // ADMIN ACTIONS - DÉPÔT (avec QR Code)
   // ============================================================
-  async depositMoney(userId: string, amount: number, description?: string) {
+  async depositMoney(
+    userId: string,
+    amount: number,
+    description?: string,
+    qrCode?: string,
+  ) {
     if (!Types.ObjectId.isValid(userId)) {
       throw new NotFoundException('ID utilisateur invalide');
     }
@@ -174,6 +253,14 @@ export class AdminService {
     const user = await this.userModel.findById(userId);
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
+    }
+
+    // Si QR Code, vérifier qu'il est valide
+    if (qrCode) {
+      const isValid = await this.validateQRCode(qrCode, 'deposit');
+      if (!isValid) {
+        throw new BadRequestException('QR Code invalide ou expiré');
+      }
     }
 
     user.balance += amount;
@@ -189,19 +276,22 @@ export class AdminService {
       status: TransactionStatus.COMPLETED,
       description: description || `Dépôt administrateur`,
       reference: `ADMIN-DEP-${Date.now()}`,
-      paymentMethod: 'admin',
-      metadata: { adminAction: true },
+      paymentMethod: qrCode ? 'qr_code' : 'admin',
+      metadata: {
+        adminAction: true,
+        adminId: new Types.ObjectId(userId),
+        qrCode: qrCode || null,
+      },
     });
 
     await this.logModel.create({
       level: 'info',
-      message: `Dépôt de ${amount} Ar effectué sur le compte de ${user.email} par l'administrateur`,
+      message: `Dépôt de ${amount} Ar effectué sur le compte de ${user.email}`,
       userId: userId,
       date: new Date(),
-      metadata: { amount, description },
+      metadata: { amount, description, qrCode },
     });
 
-    // 🔥 Notifier l'utilisateur en temps réel
     this.chatGateway?.notifyUser(userId, 'balanceUpdate', {
       newBalance: user.balance,
       amount,
@@ -217,9 +307,14 @@ export class AdminService {
   }
 
   // ============================================================
-  // ADMIN ACTIONS - RETRAIT (COMPLET)
+  // ADMIN ACTIONS - RETRAIT (avec QR Code)
   // ============================================================
-  async withdrawMoney(userId: string, amount: number, description?: string) {
+  async withdrawMoney(
+    userId: string,
+    amount: number,
+    description?: string,
+    qrCode?: string,
+  ) {
     if (!Types.ObjectId.isValid(userId)) {
       throw new NotFoundException('ID utilisateur invalide');
     }
@@ -237,6 +332,14 @@ export class AdminService {
       throw new BadRequestException('Solde insuffisant');
     }
 
+    // Si QR Code, vérifier qu'il est valide
+    if (qrCode) {
+      const isValid = await this.validateQRCode(qrCode, 'withdraw');
+      if (!isValid) {
+        throw new BadRequestException('QR Code invalide ou expiré');
+      }
+    }
+
     user.balance -= amount;
     await user.save();
 
@@ -250,19 +353,22 @@ export class AdminService {
       status: TransactionStatus.COMPLETED,
       description: description || `Retrait administrateur`,
       reference: `ADMIN-WTH-${Date.now()}`,
-      paymentMethod: 'admin',
-      metadata: { adminAction: true },
+      paymentMethod: qrCode ? 'qr_code' : 'admin',
+      metadata: {
+        adminAction: true,
+        adminId: new Types.ObjectId(userId),
+        qrCode: qrCode || null,
+      },
     });
 
     await this.logModel.create({
       level: 'info',
-      message: `Retrait de ${amount} Ar effectué sur le compte de ${user.email} par l'administrateur`,
+      message: `Retrait de ${amount} Ar effectué sur le compte de ${user.email}`,
       userId: userId,
       date: new Date(),
-      metadata: { amount, description },
+      metadata: { amount, description, qrCode },
     });
 
-    // 🔥 Notifier l'utilisateur en temps réel
     this.chatGateway?.notifyUser(userId, 'balanceUpdate', {
       newBalance: user.balance,
       amount,
@@ -278,7 +384,96 @@ export class AdminService {
   }
 
   // ============================================================
-  // ADMIN ACTIONS - GESTION DES ADMINISTRATEURS
+  // QR CODE - Génération et Validation
+  // ============================================================
+  async generateQRCode(adminId: string, type: 'deposit' | 'withdraw', amount?: number) {
+    const admin = await this.userModel.findById(adminId);
+    if (!admin) {
+      throw new NotFoundException('Administrateur non trouvé');
+    }
+
+    const qrData = {
+      type: 'admin_transaction',
+      action: type,
+      adminId: adminId,
+      adminName: `${admin.firstName} ${admin.lastName}`,
+      amount: amount || null,
+      timestamp: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(), // 5 minutes
+      signature: crypto
+        .createHash('sha256')
+        .update(`${adminId}-${type}-${amount}-${Date.now()}`)
+        .digest('hex')
+        .substring(0, 16),
+    };
+
+    const qrString = JSON.stringify(qrData);
+    const qrCodeImage = await QRCode.toDataURL(qrString);
+
+    return {
+      qrCode: qrString,
+      qrCodeImage,
+      expiresAt: qrData.expiresAt,
+      action: type,
+      amount: amount || null,
+    };
+  }
+
+  async scanQRCode(adminId: string, qrData: string) {
+    try {
+      const parsed = typeof qrData === 'string' ? JSON.parse(qrData) : qrData;
+
+      // Vérifier l'expiration
+      if (parsed.expiresAt && new Date(parsed.expiresAt) < new Date()) {
+        throw new BadRequestException('QR Code expiré');
+      }
+
+      // Vérifier le type
+      if (parsed.type !== 'admin_transaction') {
+        throw new BadRequestException('QR Code invalide pour une transaction admin');
+      }
+
+      // Vérifier la signature
+      const expectedSignature = crypto
+        .createHash('sha256')
+        .update(`${parsed.adminId}-${parsed.action}-${parsed.amount || ''}-${new Date(parsed.timestamp).getTime()}`)
+        .digest('hex')
+        .substring(0, 16);
+
+      if (parsed.signature !== expectedSignature) {
+        throw new BadRequestException('QR Code invalide');
+      }
+
+      return {
+        valid: true,
+        action: parsed.action,
+        adminId: parsed.adminId,
+        adminName: parsed.adminName,
+        amount: parsed.amount,
+      };
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
+      throw new BadRequestException('QR Code invalide');
+    }
+  }
+
+  private async validateQRCode(qrCode: string, expectedAction: string): Promise<boolean> {
+    try {
+      const parsed = JSON.parse(qrCode);
+      if (parsed.type !== 'admin_transaction' || parsed.action !== expectedAction) {
+        return false;
+      }
+      if (parsed.expiresAt && new Date(parsed.expiresAt) < new Date()) {
+        return false;
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // ============================================================
+  // ADMINISTRATEURS - CRUD (UNIQUEMENT SUPER_ADMIN)
   // ============================================================
   async createAdmin(adminData: {
     email: string;
