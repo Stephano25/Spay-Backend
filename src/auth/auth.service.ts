@@ -135,6 +135,7 @@ export class AuthService {
     return { message: 'Mot de passe modifié avec succès' };
   }
 
+  // ✅ GOOGLE OAUTH - CORRIGÉ
   async loginWithGoogle(googleUser: any) {
     this.logger.log(`🔑 Connexion Google: ${googleUser.email}`);
 
@@ -175,6 +176,7 @@ export class AuthService {
     }
 
     const access_token = this.signToken(user);
+    this.logger.log(`🔑 Token généré pour: ${user.email}`);
 
     return {
       access_token,

@@ -34,12 +34,14 @@ export class AuthController {
     return this.authService.changePassword(userId, changePasswordDto);
   }
 
+  // ✅ Google OAuth - Démarre le flux
   @Get('google')
   @UseGuards(AuthGuard('google'))
   async googleAuth() {
     // Redirection gérée par Passport
   }
 
+  // ✅ Google OAuth - Callback après authentification
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))
   async googleAuthRedirect(@Req() req, @Res() res) {
@@ -47,12 +49,18 @@ export class AuthController {
       const user = req.user;
       
       if (!user) {
+        console.error('❌ Aucun utilisateur reçu de Google');
         return res.redirect(`${process.env.FRONTEND_URL}/login?error=auth_failed`);
       }
 
+      console.log('👤 Utilisateur Google reçu:', user.email);
+
+      // ✅ Générer le token JWT
       const result = await this.authService.loginWithGoogle(user);
       
+      // ✅ Redirection vers le frontend avec le token
       const redirectUrl = `${process.env.FRONTEND_URL}/auth/callback?token=${result.access_token}`;
+      console.log('🔀 Redirection vers:', redirectUrl);
       
       return res.redirect(redirectUrl);
     } catch (error) {

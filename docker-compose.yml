@@ -1,9 +1,8 @@
 # ============================================================
-# DOCKER COMPOSE - SPaye Backend
+# DOCKER COMPOSE - SPaye Backend (Conteneur séparé)
 # ============================================================
 
 services:
-  # MongoDB
   mongodb:
     image: mongo:latest
     container_name: spaye-mongodb
@@ -25,7 +24,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # Backend API
   backend:
     build:
       context: .
@@ -40,7 +38,8 @@ services:
       - JWT_SECRET=spaye-production-super-secret-key-2024-change-me
       - JWT_EXPIRES_IN=7d
       - FRONTEND_URL=http://localhost:4200
-      - CORS_ORIGIN=http://localhost,http://localhost:4200,http://localhost:3000
+      # ✅ CORS - Autoriser le frontend
+      - CORS_ORIGIN=http://localhost,http://localhost:4200,http://localhost:3000,http://spaye-frontend:80
       - GOOGLE_CLIENT_ID=395910776421-rakkus38k5jjjeg1oi1hs1pfusv57tl8.apps.googleusercontent.com
       - GOOGLE_CLIENT_SECRET=GOCSPX-VOTRE_VRAI_SECRET_ICI
       - GOOGLE_CALLBACK_URL=http://localhost:3000/api/auth/google/callback
