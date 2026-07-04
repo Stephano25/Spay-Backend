@@ -1,7 +1,3 @@
-// ============================================================
-// USER SCHEMA - SPaye
-// ============================================================
-
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 
@@ -78,8 +74,6 @@ export class User {
 
 export const UserSchema = SchemaFactory.createForClass(User);
 
-// ✅ Un seul index par champ (pas de duplication)
-// Les index unique: true sont déjà créés par les décorateurs
 UserSchema.index({ role: 1 });
 UserSchema.index({ isActive: 1 });
 UserSchema.index({ firstName: 'text', lastName: 'text' });

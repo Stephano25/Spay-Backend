@@ -18,8 +18,6 @@ export interface MessageReaction {
 
 export interface MoneyTransferInfo {
   amount: number;
-  // 'pending' kept for backward compatibility with old messages, new transfers
-  // resolve immediately to 'completed' or 'failed'
   status: 'pending' | 'completed' | 'failed';
   transactionId?: string;
   failReason?: string;
@@ -57,21 +55,18 @@ export class Message {
   @Prop({ default: false })
   isDelivered: boolean;
 
-  // --- Edit support ---
   @Prop({ default: false })
   isEdited: boolean;
 
   @Prop()
   editedAt: Date;
 
-  // --- Soft-delete support (Facebook-style "message removed" placeholder) ---
   @Prop({ default: false })
   isDeleted: boolean;
 
   @Prop()
   deletedAt: Date;
 
-  // --- Reactions (one reaction per user, last one wins) ---
   @Prop({
     type: [{ userId: { type: Types.ObjectId, ref: 'User' }, emoji: String }],
     default: [],

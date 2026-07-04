@@ -1,4 +1,3 @@
-// backend/src/app.controller.ts
 import { Controller, Get, Res, HttpStatus } from '@nestjs/common';
 import { Response } from 'express';
 
@@ -15,7 +14,8 @@ export class AppController {
       status: 'ok',
       timestamp: new Date().toISOString(),
       version: '1.0.0',
-      cors: 'enabled'
+      cors: 'enabled',
+      uptime: process.uptime(),
     });
   }
 

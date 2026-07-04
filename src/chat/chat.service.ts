@@ -1,4 +1,3 @@
-// backend/src/chat/chat.service.ts
 import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -75,7 +74,7 @@ export class ChatService {
       return {
         amount,
         status: 'completed',
-        transactionId: transaction?._id?.toString() || transaction?.id,
+        transactionId: transaction?.id,
       };
     } catch (error: any) {
       return {

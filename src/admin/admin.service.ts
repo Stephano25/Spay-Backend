@@ -67,7 +67,6 @@ export class AdminService {
       const dailyStats = await this.buildDailyStats();
       const topUsers = await this.buildTopUsers();
 
-      // Stats pour Super Admin (globales)
       let totalAdmins = 0;
       let totalSuperAdmins = 0;
       let adminTransactions = 0;
@@ -92,7 +91,6 @@ export class AdminService {
         });
       }
 
-      // Stats pour l'admin simple (ses propres transactions)
       let myAdminTransactions = 0;
       let myAdminVolume = 0;
       if (userRole === 'admin') {
@@ -147,7 +145,6 @@ export class AdminService {
         })),
         dailyStats,
         topUsers,
-        // Stats supplémentaires selon le rôle
         totalAdmins,
         totalSuperAdmins,
         adminTransactions,
@@ -234,9 +231,10 @@ export class AdminService {
   }
 
   // ============================================================
-  // ADMIN ACTIONS - DÉPÔT (avec QR Code)
+  // ADMIN ACTIONS - DÉPÔT (CORRIGÉ)
   // ============================================================
   async depositMoney(
+    adminId: string,
     userId: string,
     amount: number,
     description?: string,
@@ -255,7 +253,6 @@ export class AdminService {
       throw new NotFoundException('Utilisateur non trouvé');
     }
 
-    // Si QR Code, vérifier qu'il est valide
     if (qrCode) {
       const isValid = await this.validateQRCode(qrCode, 'deposit');
       if (!isValid) {
@@ -279,17 +276,17 @@ export class AdminService {
       paymentMethod: qrCode ? 'qr_code' : 'admin',
       metadata: {
         adminAction: true,
-        adminId: new Types.ObjectId(userId),
+        adminId: new Types.ObjectId(adminId),
         qrCode: qrCode || null,
       },
     });
 
     await this.logModel.create({
       level: 'info',
-      message: `Dépôt de ${amount} Ar effectué sur le compte de ${user.email}`,
+      message: `Dépôt de ${amount} Ar effectué sur le compte de ${user.email} par admin ${adminId}`,
       userId: userId,
       date: new Date(),
-      metadata: { amount, description, qrCode },
+      metadata: { amount, description, qrCode, adminId },
     });
 
     this.chatGateway?.notifyUser(userId, 'balanceUpdate', {
@@ -307,9 +304,10 @@ export class AdminService {
   }
 
   // ============================================================
-  // ADMIN ACTIONS - RETRAIT (avec QR Code)
+  // ADMIN ACTIONS - RETRAIT (CORRIGÉ)
   // ============================================================
   async withdrawMoney(
+    adminId: string,
     userId: string,
     amount: number,
     description?: string,
@@ -332,7 +330,6 @@ export class AdminService {
       throw new BadRequestException('Solde insuffisant');
     }
 
-    // Si QR Code, vérifier qu'il est valide
     if (qrCode) {
       const isValid = await this.validateQRCode(qrCode, 'withdraw');
       if (!isValid) {
@@ -356,17 +353,17 @@ export class AdminService {
       paymentMethod: qrCode ? 'qr_code' : 'admin',
       metadata: {
         adminAction: true,
-        adminId: new Types.ObjectId(userId),
+        adminId: new Types.ObjectId(adminId),
         qrCode: qrCode || null,
       },
     });
 
     await this.logModel.create({
       level: 'info',
-      message: `Retrait de ${amount} Ar effectué sur le compte de ${user.email}`,
+      message: `Retrait de ${amount} Ar effectué sur le compte de ${user.email} par admin ${adminId}`,
       userId: userId,
       date: new Date(),
-      metadata: { amount, description, qrCode },
+      metadata: { amount, description, qrCode, adminId },
     });
 
     this.chatGateway?.notifyUser(userId, 'balanceUpdate', {
@@ -384,7 +381,7 @@ export class AdminService {
   }
 
   // ============================================================
-  // QR CODE - Génération et Validation
+  // QR CODE
   // ============================================================
   async generateQRCode(adminId: string, type: 'deposit' | 'withdraw', amount?: number) {
     const admin = await this.userModel.findById(adminId);
@@ -399,7 +396,7 @@ export class AdminService {
       adminName: `${admin.firstName} ${admin.lastName}`,
       amount: amount || null,
       timestamp: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(), // 5 minutes
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
       signature: crypto
         .createHash('sha256')
         .update(`${adminId}-${type}-${amount}-${Date.now()}`)
@@ -423,17 +420,14 @@ export class AdminService {
     try {
       const parsed = typeof qrData === 'string' ? JSON.parse(qrData) : qrData;
 
-      // Vérifier l'expiration
       if (parsed.expiresAt && new Date(parsed.expiresAt) < new Date()) {
         throw new BadRequestException('QR Code expiré');
       }
 
-      // Vérifier le type
       if (parsed.type !== 'admin_transaction') {
         throw new BadRequestException('QR Code invalide pour une transaction admin');
       }
 
-      // Vérifier la signature
       const expectedSignature = crypto
         .createHash('sha256')
         .update(`${parsed.adminId}-${parsed.action}-${parsed.amount || ''}-${new Date(parsed.timestamp).getTime()}`)
@@ -473,7 +467,7 @@ export class AdminService {
   }
 
   // ============================================================
-  // ADMINISTRATEURS - CRUD (UNIQUEMENT SUPER_ADMIN)
+  // ADMINISTRATEURS
   // ============================================================
   async createAdmin(adminData: {
     email: string;
@@ -679,7 +673,7 @@ export class AdminService {
   }
 
   // ============================================================
-  // LOGS & STATS SYSTÈME
+  // LOGS & STATS
   // ============================================================
   async getSystemLogs() {
     return this.logModel.find().sort({ date: -1 }).limit(50);

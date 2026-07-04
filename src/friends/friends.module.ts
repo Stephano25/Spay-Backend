@@ -14,7 +14,7 @@ import { ChatModule } from '../chat/chat.module';
       { name: User.name, schema: UserSchema },
     ]),
     forwardRef(() => ConversationsModule),
-    forwardRef(() => ChatModule), // Utiliser forwardRef
+    forwardRef(() => ChatModule),
   ],
   controllers: [FriendsController],
   providers: [FriendsService],

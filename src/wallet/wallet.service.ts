@@ -23,10 +23,6 @@ export class WalletService {
     @InjectModel(Transaction.name) private txModel: Model<TransactionDocument>,
   ) {}
 
-  /**
-   * Récupère le wallet complet d'un utilisateur (find-or-create)
-   * Utilisé par WalletComponent, UserComponent, MobileMoneyComponent
-   */
   async getWallet(userId: string) {
     const user = await this.userModel.findById(userId);
     if (!user) throw new NotFoundException('Utilisateur non trouvé');
@@ -34,7 +30,6 @@ export class WalletService {
     let wallet = await this.walletModel.findOne({ userId: new Types.ObjectId(userId) });
 
     if (!wallet) {
-      // Création du wallet en synchronisant le solde depuis User.balance
       wallet = new this.walletModel({
         userId: new Types.ObjectId(userId),
         balance: user.balance,
@@ -46,13 +41,11 @@ export class WalletService {
       });
       await wallet.save();
     } else {
-      // Synchronisation avec User.balance
       wallet.balance = user.balance;
       wallet.qrCode = user.qrCode;
       await wallet.save();
     }
 
-    // Calcul des statistiques depuis les transactions
     const stats = await this.computeStats(userId, wallet);
 
     return {
@@ -70,18 +63,12 @@ export class WalletService {
     };
   }
 
-  /**
-   * Récupère uniquement le solde (route rapide pour ScanPayComponent)
-   */
   async getBalance(userId: string) {
     const user = await this.userModel.findById(userId).select('balance');
     if (!user) throw new NotFoundException('Utilisateur non trouvé');
     return { balance: user.balance, currency: 'Ar' };
   }
 
-  /**
-   * Génère un QR code pour recevoir de l'argent
-   */
   async generateReceiveQRCode(userId: string, amount?: number) {
     const user = await this.userModel.findById(userId);
     if (!user) throw new NotFoundException('Utilisateur non trouvé');
@@ -93,7 +80,7 @@ export class WalletService {
       amount: amount ?? null,
       qrCode: user.qrCode,
       timestamp: new Date(),
-      expiresAt: new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000),
     };
 
     return {
@@ -103,9 +90,6 @@ export class WalletService {
     };
   }
 
-  /**
-   * Scanne un QR code et retourne les informations du destinataire
-   */
   async scanQRCode(userId: string, qrData: string) {
     let parsed: any;
     try {
@@ -135,9 +119,6 @@ export class WalletService {
     };
   }
 
-  /**
-   * Envoie de l'argent entre utilisateurs (crée une transaction)
-   */
   async sendMoney(userId: string, receiverId: string, amount: number, description?: string) {
     if (userId === receiverId) {
       throw new BadRequestException("Vous ne pouvez pas vous envoyer d'argent à vous-même");
@@ -151,13 +132,11 @@ export class WalletService {
     if (!sender || !receiver) throw new NotFoundException('Utilisateur non trouvé');
     if (sender.balance < amount) throw new BadRequestException('Solde insuffisant');
 
-    // Mise à jour des soldes
     sender.balance -= amount;
     receiver.balance += amount;
     await sender.save();
     await receiver.save();
 
-    // Création de la transaction
     const reference = `TXN-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
     await this.txModel.create({
       senderId: new Types.ObjectId(userId),
@@ -185,9 +164,6 @@ export class WalletService {
     };
   }
 
-  /**
-   * Dépôt d'argent (simulation, en production intégrer un prestataire)
-   */
   async deposit(userId: string, amount: number, paymentMethod: string) {
     if (amount <= 0) throw new BadRequestException('Montant invalide');
 
@@ -213,9 +189,6 @@ export class WalletService {
     return { success: true, message: 'Dépôt effectué', newBalance: user.balance, amount };
   }
 
-  /**
-   * Retrait d'argent (simulation)
-   */
   async withdraw(userId: string, amount: number, paymentMethod: string) {
     if (amount <= 0) throw new BadRequestException('Montant invalide');
 
@@ -242,9 +215,6 @@ export class WalletService {
     return { success: true, message: 'Retrait effectué', newBalance: user.balance, amount };
   }
 
-  /**
-   * Resynchronise le solde du wallet depuis User.balance
-   */
   async syncWallet(userId: string) {
     const user = await this.userModel.findById(userId).select('balance qrCode');
     if (!user) throw new NotFoundException('Utilisateur non trouvé');
@@ -257,10 +227,6 @@ export class WalletService {
 
     return { success: true, balance: user.balance, message: 'Synchronisation effectuée' };
   }
-
-  // ============================================================
-  // HELPERS PRIVÉS
-  // ============================================================
 
   private async computeStats(userId: string, wallet: WalletDocument) {
     const uid = new Types.ObjectId(userId);

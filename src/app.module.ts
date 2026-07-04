@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { AuthModule } from './auth/auth.module';  // ✅ Importé
+import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { TransactionsModule } from './transactions/transactions.module';
 import { AdminModule } from './admin/admin.module';
@@ -24,10 +24,12 @@ import { AppService } from './app.service';
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
         uri: configService.get<string>('MONGODB_URI'),
+        // Pour éviter les erreurs de connexion en développement
+        serverSelectionTimeoutMS: 5000,
       }),
       inject: [ConfigService],
     }),
-    AuthModule,  // ✅ Ajouté
+    AuthModule,
     UsersModule,
     TransactionsModule,
     AdminModule,

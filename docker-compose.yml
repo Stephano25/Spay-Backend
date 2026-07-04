@@ -1,60 +1,48 @@
-version: '3.8'
-
 services:
-  mongodb:
-    image: mongo:7.0
-    container_name: spaye-mongodb
-    restart: unless-stopped
-    ports:
-      - "27017:27017"
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: spaye2024
-      MONGO_INITDB_DATABASE: spaye
-    volumes:
-      - mongo-data:/data/db
-    networks:
-      - spaye-network
-    healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   backend:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    build: .
     container_name: spaye-backend
-    restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
       - MONGODB_URI=mongodb://admin:spaye2024@mongodb:27017/spaye?authSource=admin
-      - JWT_SECRET=spaye-production-super-secret-key-2024
+      - JWT_SECRET=spaye-production-super-secret-key-2024-change-me
       - JWT_EXPIRES_IN=7d
-      - UPLOAD_DIR=./uploads
-      - MAX_FILE_SIZE=157286400
       - FRONTEND_URL=http://localhost:4200
-      - CORS_ORIGIN=http://localhost:4200,http://localhost:3000
+      - CORS_ORIGIN=http://localhost,http://localhost:4200,http://localhost:3000
       - GOOGLE_CLIENT_ID=395910776421-rakkus38k5jjjeg1oi1hs1pfusv57tl8.apps.googleusercontent.com
-      - GOOGLE_CLIENT_SECRET=GOCSPX-MON-SECRET
+      - GOOGLE_CLIENT_SECRET=GOCSPX-VOTRE_VRAI_SECRET_ICI
       - GOOGLE_CALLBACK_URL=http://localhost:3000/api/auth/google/callback
-    volumes:
-      - uploads:/app/uploads
+      - SESSION_SECRET=spaye-session-secret-tres-securise-2024
     depends_on:
       mongodb:
-        condition: service_healthy
+        condition: service_started
+    volumes:
+      - ./uploads:/app/uploads
+    restart: unless-stopped
+    networks:
+      - spaye-network
+
+  mongodb:
+    image: mongo:latest
+    container_name: spaye-mongodb
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=spaye2024
+      - MONGO_INITDB_DATABASE=spaye
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js
+    restart: unless-stopped
     networks:
       - spaye-network
 
 volumes:
-  mongo-data:
-    driver: local
-  uploads:
-    driver: local
+  mongodb_data:
 
 networks:
   spaye-network:

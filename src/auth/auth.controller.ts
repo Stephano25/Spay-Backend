@@ -1,5 +1,4 @@
-// src/auth/auth.controller.ts
-import { Controller, Post, Body, UseGuards, Get, Req, Res, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Get, Req, Res } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -7,7 +6,7 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { AuthGuard } from '@nestjs/passport';
 
-@Controller('auth')  // ✅ Le préfixe est 'auth' donc route = /api/auth/...
+@Controller('auth')
 export class AuthController {
   constructor(private authService: AuthService) {}
 
@@ -35,11 +34,10 @@ export class AuthController {
     return this.authService.changePassword(userId, changePasswordDto);
   }
 
-  // Google OAuth
   @Get('google')
   @UseGuards(AuthGuard('google'))
   async googleAuth() {
-    // La redirection est gérée par Passport
+    // Redirection gérée par Passport
   }
 
   @Get('google/callback')
@@ -47,18 +45,14 @@ export class AuthController {
   async googleAuthRedirect(@Req() req, @Res() res) {
     try {
       const user = req.user;
-      console.log('👤 Utilisateur Google reçu:', user?.email);
       
       if (!user) {
-        console.error('❌ Aucun utilisateur reçu de Google');
         return res.redirect(`${process.env.FRONTEND_URL}/login?error=auth_failed`);
       }
 
-      const token = await this.authService.loginWithGoogle(user);
-      console.log('✅ Token généré pour:', user.email);
+      const result = await this.authService.loginWithGoogle(user);
       
-      const redirectUrl = `${process.env.FRONTEND_URL}/auth/callback?token=${token.access_token}`;
-      console.log('🔀 Redirection vers:', redirectUrl);
+      const redirectUrl = `${process.env.FRONTEND_URL}/auth/callback?token=${result.access_token}`;
       
       return res.redirect(redirectUrl);
     } catch (error) {

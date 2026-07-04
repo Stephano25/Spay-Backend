@@ -1,7 +1,3 @@
-// ============================================================
-// CHAT GATEWAY - SPaye
-// ============================================================
-
 import {
   WebSocketGateway,
   WebSocketServer,
@@ -39,46 +35,34 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   async handleConnection(client: Socket): Promise<void> {
     try {
-      // Récupérer le token
       let token = client.handshake.auth?.token ||
                   client.handshake.headers?.authorization?.replace('Bearer ', '');
 
-      console.log(`🔌 Nouvelle connexion, token: ${token ? 'présent' : 'absent'}`);
-
       if (!token) {
-        console.warn('🔴 Token manquant, déconnexion');
         client.emit('error', { message: 'Token manquant' });
         client.disconnect();
         return;
       }
 
-      // Vérifier que JWT_SECRET est défini
       const secret = this.configService.get<string>('JWT_SECRET');
       
       if (!secret) {
-        console.error('❌ JWT_SECRET non défini dans .env');
         client.emit('error', { message: 'Erreur de configuration serveur' });
         client.disconnect();
         return;
       }
 
-      console.log(`🔐 Vérification du token avec JWT_SECRET: ${secret.substring(0, 10)}...`);
-
-      // Vérifier le token avec la même clé
       const payload = this.jwtService.verify(token, {
         secret: secret,
       });
 
       const userId = payload.sub;
-      console.log(`🔑 Utilisateur authentifié: ${userId}`);
 
       if (!userId) {
-        console.warn('🔴 UserId manquant dans le token');
         client.disconnect();
         return;
       }
 
-      // Stocker l'utilisateur
       client.data.userId = userId;
       this.connectedUsers.set(userId, client.id);
 
@@ -88,43 +72,25 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.userSockets.get(userId).push(client.id);
 
       client.join(`user_${userId}`);
-      console.log(`✅ Utilisateur ${userId} connecté, socket: ${client.id}`);
 
-      // Récupérer les amis et les notifier
       try {
         const friends = await this.friendsService.getFriends(userId);
-        console.log(`👥 ${userId} a ${friends.length} amis`);
-
-        if (friends.length > 0) {
-          for (const f of friends) {
-            const friendId = f.friendId?.toString();
-            if (friendId && friendId !== userId) {
-              const isFriendConnected = this.connectedUsers.has(friendId);
-              console.log(`📤 Envoi userOnline à ${friendId}, connecté: ${isFriendConnected}`);
-              
-              this.server.to(`user_${friendId}`).emit('userOnline', {
-                userId: userId,
-                isOnline: true,
-              });
-            }
+        for (const f of friends) {
+          const friendId = f.friendId?.toString();
+          if (friendId && friendId !== userId) {
+            this.server.to(`user_${friendId}`).emit('userOnline', {
+              userId: userId,
+              isOnline: true,
+            });
           }
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Erreur inconnue';
-        console.error('❌ Erreur lors de la récupération des amis:', errorMessage);
+        // Non bloquant
       }
 
-      // Envoyer la liste des utilisateurs connectés
       const onlineUsers = Array.from(this.connectedUsers.keys());
-      console.log(`📊 Utilisateurs connectés:`, onlineUsers);
       client.emit('onlineUsers', onlineUsers);
-
-      console.log(`✅ Connexion terminée pour ${userId}`);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Erreur inconnue';
-      const errorStack = error instanceof Error ? error.stack : '';
-      console.error('❌ Erreur de connexion:', errorMessage);
-      console.error('❌ Stack:', errorStack);
       client.emit('error', { message: 'Erreur d\'authentification' });
       client.disconnect();
     }
@@ -132,12 +98,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   async handleDisconnect(client: Socket): Promise<void> {
     const userId = client.data?.userId;
-    if (!userId) {
-      console.log('🔴 Déconnexion sans userId');
-      return;
-    }
-
-    console.log(`🔌 Déconnexion de ${userId}, socket: ${client.id}`);
+    if (!userId) return;
 
     const sockets = this.userSockets.get(userId) || [];
     const index = sockets.indexOf(client.id);
@@ -148,15 +109,12 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (sockets.length === 0) {
       this.userSockets.delete(userId);
       this.connectedUsers.delete(userId);
-      console.log(`❌ ${userId} complètement déconnecté`);
 
-      // Notifier les amis que l'utilisateur est hors ligne
       try {
         const friends = await this.friendsService.getFriends(userId);
         for (const f of friends) {
           const friendId = f.friendId?.toString();
           if (friendId && friendId !== userId) {
-            console.log(`📤 Envoi userOnline(false) à ${friendId}`);
             this.server.to(`user_${friendId}`).emit('userOnline', {
               userId: userId,
               isOnline: false,
@@ -164,17 +122,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
           }
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Erreur inconnue';
-        console.error('❌ Erreur lors de la notification de déconnexion:', errorMessage);
+        // Non bloquant
       }
-    } else {
-      console.log(`ℹ️ ${userId} a encore ${sockets.length} socket(s) ouverte(s)`);
     }
   }
-
-  // ============================================================
-  // MÉTHODES UTILITAIRES
-  // ============================================================
 
   getOnlineUsers(): string[] {
     return Array.from(this.connectedUsers.keys());
@@ -184,10 +135,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return this.connectedUsers.size;
   }
 
-  // ============================================================
-  // SUBSCRIBE MESSAGES
-  // ============================================================
-
   @SubscribeMessage('sendMessage')
   async handleMessage(@ConnectedSocket() client: Socket, @MessageBody() data: any): Promise<void> {
     const senderId = client.data?.userId;
@@ -195,8 +142,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       client.emit('error', { message: 'Non authentifié' });
       return;
     }
-
-    console.log(`📤 Message de ${senderId} à ${data.receiverId}:`, data.content);
 
     if (senderId === data.receiverId) {
       client.emit('error', { message: 'Vous ne pouvez pas vous envoyer de message à vous-même' });
@@ -219,8 +164,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
 
       const receiverSocketIds = this.userSockets.get(data.receiverId) || [];
-      console.log(`📤 Envoi du message à ${receiverSocketIds.length} socket(s)`);
-      
       receiverSocketIds.forEach((sid) => {
         this.server.to(sid).emit('newMessage', message);
       });
@@ -233,8 +176,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         lastMessageTime: message.createdAt,
       });
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Erreur inconnue';
-      console.error('Erreur lors de l\'envoi du message:', errorMessage);
       client.emit('error', { message: 'Erreur lors de l\'envoi du message' });
     }
   }
@@ -328,7 +269,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (!userId) return;
 
     const onlineUsers = Array.from(this.connectedUsers.keys());
-    console.log(`📊 Demande des utilisateurs connectés par ${userId}:`, onlineUsers);
     client.emit('onlineUsers', onlineUsers);
   }
 

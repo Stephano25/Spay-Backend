@@ -23,9 +23,6 @@ export class TransactionsService {
     @InjectModel(User.name) private userModel: Model<UserDocument>,
   ) {}
 
-  // ============================================================
-  // ENVOI D'ARGENT ENTRE UTILISATEURS
-  // ============================================================
   async sendMoney(userId: string, dto: SendMoneyDto) {
     if (userId === dto.receiverId) {
       throw new BadRequestException(
@@ -45,13 +42,11 @@ export class TransactionsService {
 
     const reference = `TXN-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
 
-    // Mise à jour des soldes
     sender.balance -= dto.amount;
     receiver.balance += dto.amount;
     await sender.save();
     await receiver.save();
 
-    // Enregistrement de la transaction
     const tx = new this.txModel({
       senderId: new Types.ObjectId(userId),
       receiverId: new Types.ObjectId(dto.receiverId),
@@ -70,9 +65,6 @@ export class TransactionsService {
     return this.toTransactionResponse(tx, userId);
   }
 
-  // ============================================================
-  // TRANSFERT MOBILE MONEY
-  // ============================================================
   async mobileMoneyTransfer(
     userId: string,
     operator: string,
@@ -82,7 +74,6 @@ export class TransactionsService {
     const user = await this.userModel.findById(userId);
     if (!user) throw new NotFoundException('Utilisateur non trouvé');
 
-    // Validation
     if (amount < 100) throw new BadRequestException('Montant minimum: 100 Ar');
     if (amount > 100000000)
       throw new BadRequestException('Montant maximum: 100 000 000 Ar');
@@ -95,7 +86,6 @@ export class TransactionsService {
     if (!/^[0-9]{9,10}$/.test(cleanPhoneNumber))
       throw new BadRequestException('Numéro invalide (9-10 chiffres)');
 
-    // Calcul des frais (avec minimum)
     const fee = this.calculateFee(amount, operator);
     const totalAmount = amount + fee;
 
@@ -105,7 +95,6 @@ export class TransactionsService {
       );
     }
 
-    // Débit du compte
     user.balance -= totalAmount;
     await user.save();
 
@@ -134,10 +123,6 @@ export class TransactionsService {
     };
   }
 
-  /**
-   * Calcule les frais pour un transfert Mobile Money
-   * Taux : 0.5% pour tous les opérateurs, minimum 200 Ar
-   */
   private calculateFee(amount: number, operator: string): number {
     const feePercentage = { airtel: 0.5, orange: 0.5, mvola: 0.5 }[operator] || 0.5;
     let fee = (amount * feePercentage) / 100;
@@ -145,9 +130,6 @@ export class TransactionsService {
     return Math.ceil(fee < MINIMUM_FEE ? MINIMUM_FEE : fee);
   }
 
-  // ============================================================
-  // PAIEMENT PAR SCAN QR
-  // ============================================================
   async scanAndPay(
     userId: string,
     receiverQrCode: string,
@@ -190,9 +172,6 @@ export class TransactionsService {
     return this.toTransactionResponse(tx, userId);
   }
 
-  // ============================================================
-  // HISTORIQUE DES TRANSACTIONS D'UN UTILISATEUR
-  // ============================================================
   async getUserTransactions(userId: string) {
     const uid = new Types.ObjectId(userId);
     const txs = await this.txModel
@@ -204,15 +183,11 @@ export class TransactionsService {
     return txs.map((t) => this.toTransactionResponse(t, userId));
   }
 
-  // ============================================================
-  // STATISTIQUES DU TABLEAU DE BORD
-  // ============================================================
   async getDashboardStats(userId: string) {
     const uid = new Types.ObjectId(userId);
     const user = await this.userModel.findById(uid).select('balance');
     if (!user) throw new NotFoundException('Utilisateur non trouvé');
 
-    // Toutes les transactions complétées de l'utilisateur (envoyées + reçues)
     const allTx = await this.txModel
       .find({
         $or: [{ senderId: uid }, { receiverId: uid }],
@@ -230,7 +205,6 @@ export class TransactionsService {
     const lastDeposit = allTx.find((t) => t.type === TransactionType.DEPOSIT);
     const largestTransaction = [...allTx].sort((a, b) => b.amount - a.amount)[0];
 
-    // Statistiques mensuelles sur les 6 derniers mois
     const monthlyStats = this.buildMonthlyStats(allTx, userId);
 
     return {
@@ -247,13 +221,6 @@ export class TransactionsService {
     };
   }
 
-  // ============================================================
-  // HELPERS PRIVÉS
-  // ============================================================
-
-  /**
-   * Transforme un document transaction en objet de réponse (format attendu par le frontend)
-   */
   private toTransactionResponse(tx: any, viewerUserId: string) {
     const senderObj = tx.senderId && typeof tx.senderId === 'object' && tx.senderId.email
       ? tx.senderId
@@ -296,9 +263,6 @@ export class TransactionsService {
     };
   }
 
-  /**
-   * Construit les statistiques mensuelles sur les 6 derniers mois
-   */
   private buildMonthlyStats(txs: TransactionDocument[], userId: string) {
     const uid = userId.toString();
     const now = new Date();

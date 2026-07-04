@@ -1,7 +1,3 @@
-// ============================================================
-// AUTH SERVICE - SPaye
-// ============================================================
-
 import { Injectable, ConflictException, UnauthorizedException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -101,6 +97,10 @@ export class AuthService {
       throw new NotFoundException('Utilisateur non trouvé');
     }
 
+    if (!user.password) {
+      throw new BadRequestException('Ce compte utilise Google OAuth, pas de mot de passe');
+    }
+
     const matches = await bcrypt.compare(dto.currentPassword, user.password);
     if (!matches) {
       throw new BadRequestException('Mot de passe actuel incorrect');
@@ -113,9 +113,13 @@ export class AuthService {
   }
 
   async loginWithGoogle(googleUser: any) {
-    const { email, firstName, lastName, profilePicture } = googleUser;
+    const email = googleUser.email;
+    const firstName = googleUser.firstName || '';
+    const lastName = googleUser.lastName || '';
+    const profilePicture = googleUser.picture || '';
 
     let user = await this.userModel.findOne({ email });
+    
     if (!user) {
       const qrCode = await this.generateUniqueQrCode();
       user = new this.userModel({
@@ -133,30 +137,84 @@ export class AuthService {
       await user.save();
     } else {
       user.lastLogin = new Date();
+      if (!user.profilePicture && profilePicture) {
+        user.profilePicture = profilePicture;
+      }
+      if (!user.isGoogleUser) {
+        user.isGoogleUser = true;
+      }
       await user.save();
     }
 
     const access_token = this.signToken(user);
-    return { access_token, user: this.toUserResponse(user) };
+
+    return {
+      access_token,
+      user: this.toUserResponse(user),
+    };
   }
 
-  // ============================================================
-  // MÉTHODES PRIVÉES
-  // ============================================================
+  async createAdminUser(email: string, password: string, firstName: string, lastName: string) {
+    const existingUser = await this.userModel.findOne({ email });
+    if (existingUser) {
+      throw new ConflictException('Cet email est déjà utilisé');
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const qrCode = await this.generateUniqueQrCode();
+
+    const user = new this.userModel({
+      email,
+      password: hashedPassword,
+      firstName,
+      lastName,
+      qrCode,
+      balance: 0,
+      role: UserRole.ADMIN,
+      isActive: true,
+      lastLogin: new Date(),
+    });
+
+    await user.save();
+    return this.toUserResponse(user);
+  }
+
+  async createSuperAdminUser(email: string, password: string, firstName: string, lastName: string) {
+    const existingUser = await this.userModel.findOne({ email });
+    if (existingUser) {
+      throw new ConflictException('Cet email est déjà utilisé');
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const qrCode = await this.generateUniqueQrCode();
+
+    const user = new this.userModel({
+      email,
+      password: hashedPassword,
+      firstName,
+      lastName,
+      qrCode,
+      balance: 0,
+      role: UserRole.SUPER_ADMIN,
+      isActive: true,
+      lastLogin: new Date(),
+    });
+
+    await user.save();
+    return this.toUserResponse(user);
+  }
 
   private signToken(user: UserDocument): string {
     const secret = this.configService.get<string>('JWT_SECRET');
     
     if (!secret) {
-      console.error('❌ JWT_SECRET non défini dans .env');
       throw new Error('JWT_SECRET non configuré');
     }
-
-    console.log('🔑 Signature du token avec JWT_SECRET:', secret.substring(0, 10) + '...');
     
     return this.jwtService.sign(
       {
         sub: user._id.toString(),
+        userId: user._id.toString(),
         email: user.email,
         role: user.role,
       },
@@ -187,7 +245,7 @@ export class AuthService {
       lastName: user.lastName,
       phoneNumber: user.phoneNumber,
       profilePicture: user.profilePicture,
-      balance: user.balance,
+      balance: user.balance || 0,
       qrCode: user.qrCode,
       friends: user.friends || [],
       role: user.role,
@@ -195,6 +253,7 @@ export class AuthService {
       createdAt: user.createdAt,
       lastLogin: user.lastLogin,
       bio: user.bio,
+      isGoogleUser: user.isGoogleUser || false,
     };
   }
 }

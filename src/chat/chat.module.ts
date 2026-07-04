@@ -1,7 +1,3 @@
-// ============================================================
-// CHAT MODULE - SPaye
-// ============================================================
-
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { JwtModule } from '@nestjs/jwt';
@@ -16,7 +12,6 @@ import { TransactionsModule } from '../transactions/transactions.module';
 
 @Module({
   imports: [
-    // ✅ ConfigModule est nécessaire pour lire .env
     ConfigModule,
     MongooseModule.forFeature([
       { name: Message.name, schema: MessageSchema },

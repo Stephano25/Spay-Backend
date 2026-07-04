@@ -26,9 +26,6 @@ export class AdminController {
 
   constructor(private readonly adminService: AdminService) {}
 
-  // ============================================================
-  // DASHBOARD - Statistiques (selon le rôle)
-  // ============================================================
   @Get('dashboard/stats')
   async getDashboardStats(@Req() req: any) {
     try {
@@ -54,9 +51,6 @@ export class AdminController {
     }
   }
 
-  // ============================================================
-  // UTILISATEURS
-  // ============================================================
   @Get('users')
   async getAllUsers() {
     return this.adminService.getAllUsers();
@@ -88,11 +82,9 @@ export class AdminController {
     return this.adminService.deleteUser(userId);
   }
 
-  // ============================================================
-  // ADMIN ACTIONS - DÉPÔT (pour tous les admins)
-  // ============================================================
   @Post('users/:userId/deposit')
   async depositMoney(
+    @Req() req: any,
     @Param('userId') userId: string,
     @Body('amount') amount: number,
     @Body('description') description?: string,
@@ -104,14 +96,13 @@ export class AdminController {
     if (!amount || amount <= 0) {
       throw new BadRequestException('Montant invalide');
     }
-    return this.adminService.depositMoney(userId, amount, description, qrCode);
+    const adminId = req.user.userId;
+    return this.adminService.depositMoney(adminId, userId, amount, description, qrCode);
   }
 
-  // ============================================================
-  // ADMIN ACTIONS - RETRAIT (pour tous les admins)
-  // ============================================================
   @Post('users/:userId/withdraw')
   async withdrawMoney(
+    @Req() req: any,
     @Param('userId') userId: string,
     @Body('amount') amount: number,
     @Body('description') description?: string,
@@ -123,12 +114,10 @@ export class AdminController {
     if (!amount || amount <= 0) {
       throw new BadRequestException('Montant invalide');
     }
-    return this.adminService.withdrawMoney(userId, amount, description, qrCode);
+    const adminId = req.user.userId;
+    return this.adminService.withdrawMoney(adminId, userId, amount, description, qrCode);
   }
 
-  // ============================================================
-  // ADMIN ACTIONS - QR CODE POUR DÉPÔT/RETRAIT
-  // ============================================================
   @Post('generate-qr')
   async generateQRCode(
     @Req() req: any,
@@ -145,9 +134,6 @@ export class AdminController {
     return this.adminService.scanQRCode(adminId, qrData);
   }
 
-  // ============================================================
-  // ADMINISTRATEURS - CRUD (UNIQUEMENT SUPER_ADMIN)
-  // ============================================================
   @Post('admins')
   @Roles('super_admin')
   async createAdmin(
@@ -177,9 +163,6 @@ export class AdminController {
     return this.adminService.deleteAdmin(adminId, currentAdminId);
   }
 
-  // ============================================================
-  // TRANSACTIONS
-  // ============================================================
   @Get('transactions')
   async getAllTransactions() {
     return this.adminService.getAllTransactions();
@@ -190,9 +173,6 @@ export class AdminController {
     return this.adminService.getTransactionById(transactionId);
   }
 
-  // ============================================================
-  // PARAMÈTRES SYSTÈME
-  // ============================================================
   @Get('settings')
   async getSettings() {
     return this.adminService.getSettings();
@@ -203,9 +183,6 @@ export class AdminController {
     return this.adminService.updateSettings(settings);
   }
 
-  // ============================================================
-  // SYSTÈME
-  // ============================================================
   @Get('system/logs')
   async getSystemLogs() {
     return this.adminService.getSystemLogs();
@@ -222,9 +199,6 @@ export class AdminController {
     return this.adminService.clearCache();
   }
 
-  // ============================================================
-  // PROFIL ADMIN
-  // ============================================================
   @Get('profile')
   async getAdminProfile(@Req() req: any) {
     return this.adminService.getAdminProfile(req.user.userId);

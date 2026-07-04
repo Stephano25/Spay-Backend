@@ -1,7 +1,3 @@
-// ============================================================
-// TRANSACTION SCHEMA - SPaye
-// ============================================================
-
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 
@@ -75,7 +71,6 @@ export class Transaction {
 
 export const TransactionSchema = SchemaFactory.createForClass(Transaction);
 
-// ✅ reference est déjà unique: true via le décorateur, pas besoin d'index supplémentaire
 TransactionSchema.index({ senderId: 1, createdAt: -1 });
 TransactionSchema.index({ receiverId: 1, createdAt: -1 });
 TransactionSchema.index({ status: 1, createdAt: -1 });

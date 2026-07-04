@@ -24,9 +24,15 @@ RUN npm install --only=production && npm cache clean --force
 
 COPY --from=builder /app/dist ./dist
 
-RUN mkdir -p /app/uploads
+# Créer les dossiers pour les uploads
+RUN mkdir -p /app/uploads /app/uploads/profiles
 
-USER node
+# Créer un utilisateur non-root pour la sécurité
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001 && \
+    chown -R nodejs:nodejs /app/uploads
+
+USER nodejs
 
 EXPOSE 3000
 

@@ -1,4 +1,3 @@
-// backend/src/friends/friends.service.ts
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Inject, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -16,10 +15,6 @@ export class FriendsService {
     @Inject(forwardRef(() => ChatGateway)) private chatGateway: ChatGateway,
   ) {}
 
-  // ============================================================
-  // RÉCUPÉRATION DES AMIS – CORRECTION FINALE
-  // ============================================================
-
   async getFriends(userId: string): Promise<any[]> {
     const userObjectId = new Types.ObjectId(userId);
     
@@ -35,29 +30,21 @@ export class FriendsService {
       .populate('friendId', 'firstName lastName email phoneNumber profilePicture isOnline lastSeen')
       .exec();
 
-    console.log(`🔍 getFriends: ${friendships.length} relations trouvées pour ${userId}`);
-
     const validFriendships = friendships.filter(f => f.userId && f.friendId);
-    console.log(`✅ ${validFriendships.length} relations valides`);
 
     const result = validFriendships.map((f) => {
       const user = f.userId as any;
       const friend = f.friendId as any;
       
-      // 🔥 Déterminer correctement qui est l'utilisateur courant
       const isCurrentUser = user._id.toString() === userId;
-      
-      // 🔥 L'AMI est TOUJOURS l'autre utilisateur
       const friendObj = isCurrentUser ? friend : user;
       const friendId = isCurrentUser ? friend._id.toString() : user._id.toString();
       const currentUserId = isCurrentUser ? user._id.toString() : friend._id.toString();
       
-      console.log(`  ✅ Utilisateur courant: ${currentUserId} -> AMI: ${friendId} (${friendObj.firstName} ${friendObj.lastName})`);
-      
       return {
         id: f._id.toString(),
         userId: currentUserId,
-        friendId: friendId, // 🔥 TOUJOURS l'ID de l'AMI
+        friendId: friendId,
         status: f.status,
         friend: {
           id: friendObj._id.toString(),
@@ -72,18 +59,8 @@ export class FriendsService {
       };
     });
 
-    console.log('📤 Résultat getFriends:', result.map(r => ({
-      userId: r.userId,
-      friendId: r.friendId,
-      friendName: r.friend.firstName
-    })));
-
     return result;
   }
-
-  // ============================================================
-  // DEMANDES D'AMI
-  // ============================================================
 
   async getFriendRequests(userId: string): Promise<any[]> {
     const requests = await this.friendModel
@@ -113,10 +90,6 @@ export class FriendsService {
         };
       });
   }
-
-  // ============================================================
-  // UTILISATEURS BLOQUÉS
-  // ============================================================
 
   async getBlockedUsers(userId: string): Promise<any[]> {
     const userObjectId = new Types.ObjectId(userId);
@@ -156,10 +129,6 @@ export class FriendsService {
       });
   }
 
-  // ============================================================
-  // SUGGESTIONS D'AMIS
-  // ============================================================
-
   async getSuggestions(userId: string): Promise<any[]> {
     const userObjectId = new Types.ObjectId(userId);
     const existingFriends = await this.friendModel.find({
@@ -196,10 +165,6 @@ export class FriendsService {
       isBlocked: false,
     }));
   }
-
-  // ============================================================
-  // RECHERCHE D'UTILISATEURS
-  // ============================================================
 
   async searchUsers(query: string, currentUserId: string): Promise<any[]> {
     const users = await this.userModel
@@ -242,10 +207,6 @@ export class FriendsService {
     );
   }
 
-  // ============================================================
-  // TROUVER UTILISATEURS PAR TÉLÉPHONE
-  // ============================================================
-
   async findUsersByPhones(phones: string[], currentUserId: string): Promise<any[]> {
     const cleanPhones = phones.map((p) => p.replace(/\s/g, '').replace(/[^0-9]/g, ''));
     const users = await this.userModel
@@ -283,10 +244,6 @@ export class FriendsService {
       }));
   }
 
-  // ============================================================
-  // VÉRIFICATION DE BLOCAGE
-  // ============================================================
-
   async checkBlockStatus(userId: string, otherUserId: string) {
     const friendship = await this.friendModel.findOne({
       $or: [
@@ -306,10 +263,6 @@ export class FriendsService {
       canMessage: !isBlocked,
     };
   }
-
-  // ============================================================
-  // ACTIONS
-  // ============================================================
 
   async sendFriendRequest(userId: string, friendId: string) {
     if (userId === friendId) {
@@ -404,14 +357,6 @@ export class FriendsService {
         request.userId.toString(),
         request.friendId.toString(),
       ]);
-      if (conversation) {
-        await this.conversationsService.sendMessage(
-          conversation._id.toString(),
-          'system',
-          '👋 Vous êtes maintenant amis ! Commencez à discuter.',
-          'text',
-        );
-      }
     } catch (e) {
       console.error('Erreur création conversation:', e);
     }

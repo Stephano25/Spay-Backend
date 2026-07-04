@@ -1,4 +1,3 @@
-// backend/src/chat/chat.controller.ts
 import {
   Controller,
   Get,
@@ -12,6 +11,7 @@ import {
   UseInterceptors,
   UploadedFile,
   Query,
+  BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ChatService } from './chat.service';
@@ -19,6 +19,8 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { SendMessageDto } from './dto/message.dto';
 import { diskStorage } from 'multer';
 import { extname } from 'path';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Controller('chat')
 @UseGuards(JwtAuthGuard)
@@ -93,7 +95,13 @@ export class ChatController {
   @UseInterceptors(
     FileInterceptor('file', {
       storage: diskStorage({
-        destination: './uploads',
+        destination: (req, file, cb) => {
+          const uploadPath = path.join(process.cwd(), 'uploads');
+          if (!fs.existsSync(uploadPath)) {
+            fs.mkdirSync(uploadPath, { recursive: true });
+          }
+          cb(null, uploadPath);
+        },
         filename: (req, file, cb) => {
           const randomName = Array(32)
             .fill(null)
@@ -104,11 +112,14 @@ export class ChatController {
         },
       }),
       limits: {
-        fileSize: 150 * 1024 * 1024, // 150 MB
+        fileSize: 150 * 1024 * 1024,
       },
     }),
   )
   async uploadFile(@UploadedFile() file: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException('Aucun fichier uploadé');
+    }
     return this.chatService.uploadFile(file);
   }
 }
