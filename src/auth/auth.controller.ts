@@ -7,7 +7,7 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { AuthGuard } from '@nestjs/passport';
 
-@Controller('auth')
+@Controller('auth')  // ✅ Le préfixe est 'auth' donc route = /api/auth/...
 export class AuthController {
   constructor(private authService: AuthService) {}
 
@@ -35,10 +35,7 @@ export class AuthController {
     return this.authService.changePassword(userId, changePasswordDto);
   }
 
-  // ============================================================
-  // Google OAuth - CORRIGÉ
-  // ============================================================
-
+  // Google OAuth
   @Get('google')
   @UseGuards(AuthGuard('google'))
   async googleAuth() {
@@ -60,7 +57,6 @@ export class AuthController {
       const token = await this.authService.loginWithGoogle(user);
       console.log('✅ Token généré pour:', user.email);
       
-      // Rediriger vers le frontend avec le token
       const redirectUrl = `${process.env.FRONTEND_URL}/auth/callback?token=${token.access_token}`;
       console.log('🔀 Redirection vers:', redirectUrl);
       

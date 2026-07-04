@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   mongodb:
     image: mongo:7.0
@@ -11,7 +13,6 @@ services:
       MONGO_INITDB_DATABASE: spaye
     volumes:
       - mongo-data:/data/db
-      - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
     networks:
       - spaye-network
     healthcheck:
@@ -22,7 +23,7 @@ services:
 
   backend:
     build:
-      context: ./backend
+      context: .
       dockerfile: Dockerfile
     container_name: spaye-backend
     restart: unless-stopped
@@ -36,8 +37,8 @@ services:
       - JWT_EXPIRES_IN=7d
       - UPLOAD_DIR=./uploads
       - MAX_FILE_SIZE=157286400
-      - FRONTEND_URL=http://localhost
-      - CORS_ORIGIN=http://localhost,http://localhost:4200
+      - FRONTEND_URL=http://localhost:4200
+      - CORS_ORIGIN=http://localhost:4200,http://localhost:3000
       - GOOGLE_CLIENT_ID=395910776421-rakkus38k5jjjeg1oi1hs1pfusv57tl8.apps.googleusercontent.com
       - GOOGLE_CLIENT_SECRET=GOCSPX-MON-SECRET
       - GOOGLE_CALLBACK_URL=http://localhost:3000/api/auth/google/callback
@@ -48,19 +49,6 @@ services:
         condition: service_healthy
     networks:
       - spaye-network
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: spaye-frontend
-    restart: unless-stopped
-    ports:
-      - "4200:80"
-    networks:
-      - spaye-network
-    depends_on:
-      - backend
 
 volumes:
   mongo-data:

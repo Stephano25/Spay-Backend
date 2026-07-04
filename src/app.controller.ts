@@ -1,33 +1,31 @@
 // backend/src/app.controller.ts
-import { Controller, Get } from '@nestjs/common';
-import { AppService } from './app.service';
+import { Controller, Get, Res, HttpStatus } from '@nestjs/common';
+import { Response } from 'express';
 
 @Controller()
 export class AppController {
-  constructor(private readonly appService: AppService) {}
-
   @Get()
   getHello(): string {
-    return this.appService.getHello();
+    return 'SPaye API is running!';
   }
   
   @Get('health')
-  healthCheck() {
-    return { 
-      status: 'ok', 
+  healthCheck(@Res() res: Response) {
+    return res.status(HttpStatus.OK).json({
+      status: 'ok',
       timestamp: new Date().toISOString(),
       version: '1.0.0',
       cors: 'enabled'
-    };
+    });
   }
 
   @Get('test-cors')
-  testCors() {
-    return { 
+  testCors(@Res() res: Response) {
+    return res.status(HttpStatus.OK).json({
       message: 'CORS est fonctionnel !',
       headers: {
         'Access-Control-Allow-Origin': '*'
       }
-    };
+    });
   }
 }

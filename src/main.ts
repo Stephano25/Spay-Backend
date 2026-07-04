@@ -4,19 +4,17 @@ import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { join } from 'path';
-import * as os from 'os';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   
+  // ✅ CORS correctement configuré
   app.enableCors({
-    origin: true,
+    origin: ['http://localhost:4200', 'http://localhost:3000', 'http://localhost'],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
     exposedHeaders: ['Authorization'],
-    preflightContinue: false,
-    optionsSuccessStatus: 204,
   });
   
   app.useGlobalPipes(new ValidationPipe({ 
@@ -24,8 +22,15 @@ async function bootstrap() {
     transform: true,
   }));
   
-  // 🔥 Servir les fichiers statiques uploadés
+  // ✅ Servir les fichiers statiques
   app.useStaticAssets(join(__dirname, '..', 'uploads'), { prefix: '/uploads/' });
+  
+  // ✅ Forcer le type de réponse JSON pour toutes les routes API
+  app.use((req, res, next) => {
+    res.setHeader('Content-Type', 'application/json');
+    next();
+  });
+  
   app.setGlobalPrefix('api');
   
   const port = 3000;
@@ -34,8 +39,6 @@ async function bootstrap() {
   console.log('===================================================');
   console.log('✅ Backend démarré avec succès !');
   console.log(`🌐 Accès local : http://localhost:${port}/api`);
-  console.log('===================================================');
-  console.log('📁 Fichiers statiques : /uploads/');
   console.log('===================================================');
 }
 bootstrap();

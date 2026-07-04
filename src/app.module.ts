@@ -1,11 +1,7 @@
-// ============================================================
-// APP MODULE - SPaye
-// ============================================================
-
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { AuthModule } from './auth/auth.module';
+import { AuthModule } from './auth/auth.module';  // ✅ Importé
 import { UsersModule } from './users/users.module';
 import { TransactionsModule } from './transactions/transactions.module';
 import { AdminModule } from './admin/admin.module';
@@ -20,7 +16,6 @@ import { AppService } from './app.service';
 
 @Module({
   imports: [
-    // ✅ ConfigModule avec isGlobal et chemin du fichier .env
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
@@ -32,7 +27,7 @@ import { AppService } from './app.service';
       }),
       inject: [ConfigService],
     }),
-    AuthModule,
+    AuthModule,  // ✅ Ajouté
     UsersModule,
     TransactionsModule,
     AdminModule,
