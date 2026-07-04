@@ -4,7 +4,6 @@
 
 db = db.getSiblingDB('spaye');
 
-// Créer l'utilisateur si nécessaire
 try {
   db.createUser({
     user: 'spaye_user',
@@ -17,7 +16,6 @@ try {
   // L'utilisateur existe déjà
 }
 
-// Créer les collections
 db.createCollection('users');
 db.createCollection('transactions');
 db.createCollection('messages');
@@ -26,7 +24,6 @@ db.createCollection('wallets');
 db.createCollection('settings');
 db.createCollection('logs');
 
-// Créer les index
 db.users.createIndex({ email: 1 }, { unique: true });
 db.users.createIndex({ phoneNumber: 1 }, { unique: true, sparse: true });
 db.users.createIndex({ qrCode: 1 }, { unique: true, sparse: true });

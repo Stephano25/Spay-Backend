@@ -1,4 +1,11 @@
-import { Injectable, ConflictException, UnauthorizedException, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  ConflictException,
+  UnauthorizedException,
+  NotFoundException,
+  BadRequestException,
+  Logger,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { JwtService } from '@nestjs/jwt';
@@ -12,6 +19,8 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     private jwtService: JwtService,
@@ -19,6 +28,8 @@ export class AuthService {
   ) {}
 
   async register(registerDto: RegisterDto) {
+    this.logger.log(`📝 Inscription: ${registerDto.email}`);
+
     const existingEmail = await this.userModel.findOne({ email: registerDto.email.toLowerCase() });
     if (existingEmail) {
       throw new ConflictException('Cet email est déjà utilisé');
@@ -48,6 +59,7 @@ export class AuthService {
     });
 
     await user.save();
+    this.logger.log(`✅ Utilisateur créé: ${user.email}`);
 
     const access_token = this.signToken(user);
 
@@ -58,22 +70,29 @@ export class AuthService {
   }
 
   async login(loginDto: LoginDto) {
+    this.logger.log(`🔐 Tentative de connexion: ${loginDto.email}`);
+
     const user = await this.userModel.findOne({ email: loginDto.email.toLowerCase() });
     if (!user) {
+      this.logger.warn(`❌ Utilisateur non trouvé: ${loginDto.email}`);
       throw new UnauthorizedException('Email ou mot de passe incorrect');
     }
 
     const passwordMatches = await bcrypt.compare(loginDto.password, user.password);
     if (!passwordMatches) {
+      this.logger.warn(`❌ Mot de passe incorrect: ${loginDto.email}`);
       throw new UnauthorizedException('Email ou mot de passe incorrect');
     }
 
     if (!user.isActive) {
+      this.logger.warn(`❌ Compte désactivé: ${loginDto.email}`);
       throw new UnauthorizedException('Ce compte a été désactivé');
     }
 
     user.lastLogin = new Date();
     await user.save();
+
+    this.logger.log(`✅ Connexion réussie: ${user.email} (${user.role})`);
 
     const access_token = this.signToken(user);
 
@@ -84,6 +103,8 @@ export class AuthService {
   }
 
   async getProfile(userId: string) {
+    this.logger.log(`👤 Profil demandé: ${userId}`);
+
     const user = await this.userModel.findById(userId);
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
@@ -109,18 +130,23 @@ export class AuthService {
     user.password = await bcrypt.hash(dto.newPassword, 10);
     await user.save();
 
+    this.logger.log(`🔑 Mot de passe modifié pour: ${user.email}`);
+
     return { message: 'Mot de passe modifié avec succès' };
   }
 
   async loginWithGoogle(googleUser: any) {
+    this.logger.log(`🔑 Connexion Google: ${googleUser.email}`);
+
     const email = googleUser.email;
-    const firstName = googleUser.firstName || '';
-    const lastName = googleUser.lastName || '';
+    const firstName = googleUser.firstName || 'Google';
+    const lastName = googleUser.lastName || 'User';
     const profilePicture = googleUser.picture || '';
 
     let user = await this.userModel.findOne({ email });
     
     if (!user) {
+      this.logger.log(`📝 Création d'un nouvel utilisateur Google: ${email}`);
       const qrCode = await this.generateUniqueQrCode();
       user = new this.userModel({
         email,
@@ -135,7 +161,9 @@ export class AuthService {
         isGoogleUser: true,
       });
       await user.save();
+      this.logger.log(`✅ Utilisateur Google créé: ${email}`);
     } else {
+      this.logger.log(`🔄 Mise à jour de l'utilisateur Google: ${email}`);
       user.lastLogin = new Date();
       if (!user.profilePicture && profilePicture) {
         user.profilePicture = profilePicture;
@@ -155,6 +183,8 @@ export class AuthService {
   }
 
   async createAdminUser(email: string, password: string, firstName: string, lastName: string) {
+    this.logger.log(`📝 Création admin: ${email}`);
+
     const existingUser = await this.userModel.findOne({ email });
     if (existingUser) {
       throw new ConflictException('Cet email est déjà utilisé');
@@ -176,10 +206,13 @@ export class AuthService {
     });
 
     await user.save();
+    this.logger.log(`✅ Admin créé: ${email}`);
     return this.toUserResponse(user);
   }
 
   async createSuperAdminUser(email: string, password: string, firstName: string, lastName: string) {
+    this.logger.log(`📝 Création Super Admin: ${email}`);
+
     const existingUser = await this.userModel.findOne({ email });
     if (existingUser) {
       throw new ConflictException('Cet email est déjà utilisé');
@@ -201,6 +234,7 @@ export class AuthService {
     });
 
     await user.save();
+    this.logger.log(`✅ Super Admin créé: ${email}`);
     return this.toUserResponse(user);
   }
 
@@ -208,6 +242,7 @@ export class AuthService {
     const secret = this.configService.get<string>('JWT_SECRET');
     
     if (!secret) {
+      this.logger.error('❌ JWT_SECRET non configuré');
       throw new Error('JWT_SECRET non configuré');
     }
     

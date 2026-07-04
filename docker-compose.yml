@@ -1,30 +1,9 @@
-services:
-  backend:
-    build: .
-    container_name: spaye-backend
-    ports:
-      - "3000:3000"
-    environment:
-      - NODE_ENV=production
-      - PORT=3000
-      - MONGODB_URI=mongodb://admin:spaye2024@mongodb:27017/spaye?authSource=admin
-      - JWT_SECRET=spaye-production-super-secret-key-2024-change-me
-      - JWT_EXPIRES_IN=7d
-      - FRONTEND_URL=http://localhost:4200
-      - CORS_ORIGIN=http://localhost,http://localhost:4200,http://localhost:3000
-      - GOOGLE_CLIENT_ID=395910776421-rakkus38k5jjjeg1oi1hs1pfusv57tl8.apps.googleusercontent.com
-      - GOOGLE_CLIENT_SECRET=GOCSPX-VOTRE_VRAI_SECRET_ICI
-      - GOOGLE_CALLBACK_URL=http://localhost:3000/api/auth/google/callback
-      - SESSION_SECRET=spaye-session-secret-tres-securise-2024
-    depends_on:
-      mongodb:
-        condition: service_started
-    volumes:
-      - ./uploads:/app/uploads
-    restart: unless-stopped
-    networks:
-      - spaye-network
+# ============================================================
+# DOCKER COMPOSE - SPaye Backend
+# ============================================================
 
+services:
+  # MongoDB
   mongodb:
     image: mongo:latest
     container_name: spaye-mongodb
@@ -40,10 +19,48 @@ services:
     restart: unless-stopped
     networks:
       - spaye-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend API
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: spaye-backend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - MONGODB_URI=mongodb://admin:spaye2024@mongodb:27017/spaye?authSource=admin
+      - JWT_SECRET=spaye-production-super-secret-key-2024-change-me
+      - JWT_EXPIRES_IN=7d
+      - FRONTEND_URL=http://localhost:4200
+      - CORS_ORIGIN=http://localhost,http://localhost:4200,http://localhost:3000
+      - GOOGLE_CLIENT_ID=395910776421-rakkus38k5jjjeg1oi1hs1pfusv57tl8.apps.googleusercontent.com
+      - GOOGLE_CLIENT_SECRET=GOCSPX-VOTRE_VRAI_SECRET_ICI
+      - GOOGLE_CALLBACK_URL=http://localhost:3000/api/auth/google/callback
+      - SESSION_SECRET=spaye-session-secret-tres-securise-2024
+      - UPLOAD_DIR=./uploads
+      - MAX_FILE_SIZE=157286400
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    volumes:
+      - ./uploads:/app/uploads
+    restart: unless-stopped
+    networks:
+      - spaye-network
 
 volumes:
   mongodb_data:
 
+# ✅ Réseau partagé
 networks:
   spaye-network:
     driver: bridge
+    name: spaye-network
