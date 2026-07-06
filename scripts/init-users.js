@@ -1,25 +1,13 @@
-// ============================================================
-// SCRIPT D'INITIALISATION DES UTILISATEURS - SPaye
-// ============================================================
-
-console.log('🚀 Initialisation des utilisateurs SPaye...');
-
-// Attendre que MongoDB soit prêt
-const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+// scripts/init-users.js
+const mongoose = require('mongoose');
+const bcrypt = require('bcrypt');
+const crypto = require('crypto');
 
 async function initUsers() {
   try {
-    console.log('⏳ Attente de la connexion MongoDB...');
-    await wait(5000);
-    
-    const mongoose = require('mongoose');
-    const bcrypt = require('bcrypt');
-    const crypto = require('crypto');
-
     const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://admin:spaye2024@mongodb:27017/spaye?authSource=admin';
     
     console.log(`🔗 Connexion à MongoDB: ${MONGODB_URI}`);
-    
     await mongoose.connect(MONGODB_URI, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
@@ -28,7 +16,6 @@ async function initUsers() {
     
     console.log('✅ Connecté à MongoDB');
 
-    // Schéma User
     const userSchema = new mongoose.Schema({
       email: { type: String, required: true, unique: true },
       password: { type: String, required: true },
@@ -49,7 +36,6 @@ async function initUsers() {
 
     const User = mongoose.model('User', userSchema);
 
-    // Utilisateurs à créer
     const users = [
       {
         email: 'superadmin@spaye.com',
@@ -77,7 +63,6 @@ async function initUsers() {
       },
     ];
 
-    // Générer un QR Code unique
     async function generateUniqueQrCode() {
       const maxAttempts = 5;
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -95,7 +80,6 @@ async function initUsers() {
 
     for (const userData of users) {
       console.log(`👤 Traitement de: ${userData.email}`);
-
       const existing = await User.findOne({ email: userData.email });
 
       if (existing) {

@@ -1,21 +1,18 @@
-# ============================================================
-# DOCKER COMPOSE - SPaye Backend (Conteneur séparé)
-# ============================================================
-
+# docker-compose.yml (version corrigée - sans la ligne version)
 services:
   mongodb:
-    image: mongo:latest
+    image: mongo:7
     container_name: spaye-mongodb
+    restart: always
     environment:
-      - MONGO_INITDB_ROOT_USERNAME=admin
-      - MONGO_INITDB_ROOT_PASSWORD=spaye2024
-      - MONGO_INITDB_DATABASE=spaye
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: spaye2024
+      MONGO_INITDB_DATABASE: spaye
     ports:
       - "27017:27017"
     volumes:
       - mongodb_data:/data/db
-      - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js
-    restart: unless-stopped
+      - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
     networks:
       - spaye-network
     healthcheck:
@@ -25,10 +22,9 @@ services:
       retries: 5
 
   backend:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    build: .
     container_name: spaye-backend
+    restart: always
     ports:
       - "3000:3000"
     environment:
@@ -38,8 +34,7 @@ services:
       - JWT_SECRET=spaye-production-super-secret-key-2024-change-me
       - JWT_EXPIRES_IN=7d
       - FRONTEND_URL=http://localhost:4200
-      # ✅ CORS - Autoriser le frontend
-      - CORS_ORIGIN=http://localhost,http://localhost:4200,http://localhost:3000,http://spaye-frontend:80
+      - CORS_ORIGIN=http://localhost,http://localhost:4200,http://localhost:3000,http://localhost:8081,http://localhost:19000,http://localhost:19001,http://localhost:19002,http://192.168.188.135:8081,http://192.168.188.135:19000,http://192.168.188.135:19001,http://192.168.188.135:19002
       - GOOGLE_CLIENT_ID=395910776421-rakkus38k5jjjeg1oi1hs1pfusv57tl8.apps.googleusercontent.com
       - GOOGLE_CLIENT_SECRET=GOCSPX-VOTRE_VRAI_SECRET_ICI
       - GOOGLE_CALLBACK_URL=http://localhost:3000/api/auth/google/callback
@@ -49,17 +44,39 @@ services:
     depends_on:
       mongodb:
         condition: service_healthy
-    volumes:
-      - ./uploads:/app/uploads
-    restart: unless-stopped
     networks:
       - spaye-network
+    volumes:
+      - uploads:/app/uploads
+
+  # Backend en développement (optionnel)
+  backend-dev:
+    build: .
+    container_name: spaye-backend-dev
+    restart: always
+    ports:
+      - "3001:3000"
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - MONGODB_URI=mongodb://admin:spaye2024@mongodb:27017/spaye?authSource=admin
+      - JWT_SECRET=spaye-dev-secret-key
+      - JWT_EXPIRES_IN=7d
+      - CORS_ORIGIN=*
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - spaye-network
+    volumes:
+      - ./src:/app/src
+      - ./dist:/app/dist
+    command: npm run start:dev
 
 volumes:
   mongodb_data:
+  uploads:
 
-# ✅ Réseau partagé
 networks:
   spaye-network:
     driver: bridge
-    name: spaye-network

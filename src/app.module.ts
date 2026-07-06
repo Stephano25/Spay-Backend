@@ -1,3 +1,4 @@
+// src/app.module.ts
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -13,6 +14,7 @@ import { SettingsModule } from './settings/settings.module';
 import { LogsModule } from './logs/logs.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { HealthController } from './health.controller';
 
 @Module({
   imports: [
@@ -24,7 +26,6 @@ import { AppService } from './app.service';
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
         uri: configService.get<string>('MONGODB_URI'),
-        // Pour éviter les erreurs de connexion en développement
         serverSelectionTimeoutMS: 5000,
       }),
       inject: [ConfigService],
@@ -40,7 +41,7 @@ import { AppService } from './app.service';
     SettingsModule,
     LogsModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, HealthController],
   providers: [AppService],
 })
 export class AppModule {}
