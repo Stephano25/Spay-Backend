@@ -51,6 +51,28 @@ export class AdminController {
     }
   }
 
+  // ✅ NOUVEAU : Endpoint pour les commissions
+  @Get('dashboard/commissions')
+  async getCommissionStats(@Req() req: any) {
+    try {
+      const userId = req.user.userId;
+      const userRole = req.user.role;
+      this.logger.log(`💰 Récupération des commissions pour ${userRole} (${userId})`);
+      const commissions = await this.adminService.getCommissionStats(userId, userRole);
+      return commissions;
+    } catch (error) {
+      this.logger.error('❌ Erreur commissions:', error);
+      return {
+        totalCommission: 0,
+        commissionTransactions: 0,
+        commissionRate: 0.5,
+        recentCommissions: [],
+        myCommission: 0,
+        myCommissionTransactions: 0,
+      };
+    }
+  }
+
   @Get('users')
   async getAllUsers() {
     return this.adminService.getAllUsers();

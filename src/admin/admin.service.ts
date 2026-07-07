@@ -176,6 +176,124 @@ export class AdminService {
   }
 
   // ============================================================
+  // ✅ NOUVEAU : STATISTIQUES DES COMMISSIONS
+  // ============================================================
+  async getCommissionStats(userId: string, userRole: string) {
+    try {
+      const commissionRate = 0.5; // 0.5% de commission
+      let totalCommission = 0;
+      let commissionTransactions = 0;
+      let recentCommissions = [];
+      let myCommission = 0;
+      let myCommissionTransactions = 0;
+
+      if (userRole === 'super_admin') {
+        // ✅ SuperAdmin : commission sur TOUTES les transactions admin
+        const allAdminTx = await this.transactionModel
+          .find({
+            status: TransactionStatus.COMPLETED,
+            'metadata.adminAction': true,
+          })
+          .sort({ createdAt: -1 })
+          .populate('senderId', 'firstName lastName email')
+          .populate('receiverId', 'firstName lastName email')
+          .lean();
+
+        // Calculer les commissions
+        commissionTransactions = allAdminTx.length;
+        totalCommission = allAdminTx.reduce((sum, tx) => {
+          return sum + (tx.amount * commissionRate / 100);
+        }, 0);
+
+        // Dernières commissions
+        recentCommissions = allAdminTx.slice(0, 5).map((tx: any) => ({
+          id: tx._id.toString(),
+          adminName: 'Admin',
+          userName: tx.receiverId 
+            ? `${(tx.receiverId as any)?.firstName || ''} ${(tx.receiverId as any)?.lastName || ''}`.trim() 
+            : tx.senderId 
+              ? `${(tx.senderId as any)?.firstName || ''} ${(tx.senderId as any)?.lastName || ''}`.trim()
+              : 'Utilisateur',
+          amount: tx.amount,
+          commission: tx.amount * commissionRate / 100,
+          createdAt: tx.createdAt,
+          type: tx.type,
+        }));
+
+        // Commission de l'admin connecté (si c'est un super_admin qui fait des transactions)
+        const myAdminTx = await this.transactionModel
+          .find({
+            status: TransactionStatus.COMPLETED,
+            'metadata.adminId': new Types.ObjectId(userId),
+          })
+          .lean();
+
+        myCommissionTransactions = myAdminTx.length;
+        myCommission = myAdminTx.reduce((sum, tx) => {
+          return sum + (tx.amount * commissionRate / 100);
+        }, 0);
+
+      } else if (userRole === 'admin') {
+        // ✅ Admin : commission sur SES propres transactions
+        const myTx = await this.transactionModel
+          .find({
+            status: TransactionStatus.COMPLETED,
+            'metadata.adminId': new Types.ObjectId(userId),
+          })
+          .sort({ createdAt: -1 })
+          .populate('senderId', 'firstName lastName email')
+          .populate('receiverId', 'firstName lastName email')
+          .lean();
+
+        myCommissionTransactions = myTx.length;
+        myCommission = myTx.reduce((sum, tx) => {
+          return sum + (tx.amount * commissionRate / 100);
+        }, 0);
+
+        // Dernières commissions de l'admin
+        recentCommissions = myTx.slice(0, 5).map((tx: any) => ({
+          id: tx._id.toString(),
+          adminName: 'Moi',
+          userName: tx.receiverId 
+            ? `${(tx.receiverId as any)?.firstName || ''} ${(tx.receiverId as any)?.lastName || ''}`.trim() 
+            : tx.senderId 
+              ? `${(tx.senderId as any)?.firstName || ''} ${(tx.senderId as any)?.lastName || ''}`.trim()
+              : 'Utilisateur',
+          amount: tx.amount,
+          commission: tx.amount * commissionRate / 100,
+          createdAt: tx.createdAt,
+          type: tx.type,
+        }));
+
+        // L'admin ne voit pas les commissions des autres admins
+        totalCommission = myCommission;
+        commissionTransactions = myCommissionTransactions;
+      }
+
+      return {
+        totalCommission: Math.round(totalCommission * 100) / 100,
+        commissionTransactions,
+        commissionRate,
+        recentCommissions,
+        myCommission: Math.round(myCommission * 100) / 100,
+        myCommissionTransactions,
+        userRole,
+      };
+    } catch (error) {
+      console.error('❌ Erreur getCommissionStats:', error);
+      return {
+        totalCommission: 0,
+        commissionTransactions: 0,
+        commissionRate: 0.5,
+        recentCommissions: [],
+        myCommission: 0,
+        myCommissionTransactions: 0,
+        userRole,
+      };
+    }
+  }
+
+  // ============================================================
   // UTILISATEURS
   // ============================================================
   async getAllUsers() {
@@ -231,7 +349,7 @@ export class AdminService {
   }
 
   // ============================================================
-  // ADMIN ACTIONS - DÉPÔT (CORRIGÉ)
+  // ADMIN ACTIONS - DÉPÔT
   // ============================================================
   async depositMoney(
     adminId: string,
@@ -260,6 +378,10 @@ export class AdminService {
       }
     }
 
+    // ✅ Calculer la commission (0.5% pour le SuperAdmin)
+    const commissionRate = 0.5;
+    const commission = (amount * commissionRate) / 100;
+
     user.balance += amount;
     await user.save();
 
@@ -269,6 +391,7 @@ export class AdminService {
       type: 'deposit',
       amount: amount,
       fee: 0,
+      commission: commission, // ✅ Ajout de la commission
       totalAmount: amount,
       status: TransactionStatus.COMPLETED,
       description: description || `Dépôt administrateur`,
@@ -278,15 +401,17 @@ export class AdminService {
         adminAction: true,
         adminId: new Types.ObjectId(adminId),
         qrCode: qrCode || null,
+        commission: commission,
+        commissionRate: commissionRate,
       },
     });
 
     await this.logModel.create({
       level: 'info',
-      message: `Dépôt de ${amount} Ar effectué sur le compte de ${user.email} par admin ${adminId}`,
+      message: `Dépôt de ${amount} Ar effectué sur le compte de ${user.email} par admin ${adminId} (commission: ${commission} Ar)`,
       userId: userId,
       date: new Date(),
-      metadata: { amount, description, qrCode, adminId },
+      metadata: { amount, description, qrCode, adminId, commission },
     });
 
     this.chatGateway?.notifyUser(userId, 'balanceUpdate', {
@@ -297,14 +422,15 @@ export class AdminService {
 
     return {
       success: true,
-      message: `Dépôt de ${amount} Ar effectué avec succès`,
+      message: `Dépôt de ${amount} Ar effectué avec succès (commission: ${commission} Ar)`,
       newBalance: user.balance,
+      commission: commission,
       transaction: this.toTransactionResponse(transaction),
     };
   }
 
   // ============================================================
-  // ADMIN ACTIONS - RETRAIT (CORRIGÉ)
+  // ADMIN ACTIONS - RETRAIT
   // ============================================================
   async withdrawMoney(
     adminId: string,
@@ -337,6 +463,10 @@ export class AdminService {
       }
     }
 
+    // ✅ Calculer la commission (0.5% pour le SuperAdmin)
+    const commissionRate = 0.5;
+    const commission = (amount * commissionRate) / 100;
+
     user.balance -= amount;
     await user.save();
 
@@ -346,6 +476,7 @@ export class AdminService {
       type: 'withdrawal',
       amount: amount,
       fee: 0,
+      commission: commission, // ✅ Ajout de la commission
       totalAmount: amount,
       status: TransactionStatus.COMPLETED,
       description: description || `Retrait administrateur`,
@@ -355,15 +486,17 @@ export class AdminService {
         adminAction: true,
         adminId: new Types.ObjectId(adminId),
         qrCode: qrCode || null,
+        commission: commission,
+        commissionRate: commissionRate,
       },
     });
 
     await this.logModel.create({
       level: 'info',
-      message: `Retrait de ${amount} Ar effectué sur le compte de ${user.email} par admin ${adminId}`,
+      message: `Retrait de ${amount} Ar effectué sur le compte de ${user.email} par admin ${adminId} (commission: ${commission} Ar)`,
       userId: userId,
       date: new Date(),
-      metadata: { amount, description, qrCode, adminId },
+      metadata: { amount, description, qrCode, adminId, commission },
     });
 
     this.chatGateway?.notifyUser(userId, 'balanceUpdate', {
@@ -374,8 +507,9 @@ export class AdminService {
 
     return {
       success: true,
-      message: `Retrait de ${amount} Ar effectué avec succès`,
+      message: `Retrait de ${amount} Ar effectué avec succès (commission: ${commission} Ar)`,
       newBalance: user.balance,
+      commission: commission,
       transaction: this.toTransactionResponse(transaction),
     };
   }
@@ -748,6 +882,7 @@ export class AdminService {
       description: tx.description,
       reference: tx.reference,
       createdAt: tx.createdAt,
+      commission: tx.commission || 0,
     };
   }
 
