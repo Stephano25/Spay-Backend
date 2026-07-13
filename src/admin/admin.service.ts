@@ -1,3 +1,4 @@
+// admin/admin.service.ts
 import {
   Injectable,
   NotFoundException,
@@ -16,6 +17,7 @@ import {
 import { Setting, SettingDocument } from '../settings/schemas/setting.schema';
 import { Log, LogDocument } from '../logs/schemas/log.schema';
 import { ChatGateway } from '../chat/chat.gateway';
+import { I18nService, Language } from '../i18n/i18n.service';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import * as QRCode from 'qrcode';
@@ -28,6 +30,7 @@ export class AdminService {
     @InjectModel(Setting.name) private settingModel: Model<SettingDocument>,
     @InjectModel(Log.name) private logModel: Model<LogDocument>,
     @Inject(forwardRef(() => ChatGateway)) private chatGateway: ChatGateway,
+    private i18nService: I18nService,
   ) {}
 
   // ============================================================
@@ -35,12 +38,18 @@ export class AdminService {
   // ============================================================
   async getDashboardStats(userId: string, userRole: string) {
     try {
+      // ✅ Vérifier que userId est valide
+      if (!Types.ObjectId.isValid(userId)) {
+        console.warn('⚠️ ID utilisateur invalide pour getDashboardStats');
+        return this.getEmptyDashboardStats(userRole);
+      }
+
       const [totalUsers, totalTransactions] = await Promise.all([
         this.userModel.countDocuments(),
         this.transactionModel.countDocuments(),
       ]);
 
-      const onlineUserIds = this.chatGateway.getOnlineUsers();
+      const onlineUserIds = this.chatGateway?.getOnlineUsers() || [];
       const activeUsers = onlineUserIds.length;
 
       const volumeResult = await this.transactionModel.aggregate([
@@ -53,15 +62,15 @@ export class AdminService {
         .find()
         .sort({ createdAt: -1 })
         .limit(5)
-        .select('firstName lastName email isActive createdAt')
+        .select('firstName lastName email isActive createdAt language')
         .lean();
 
       const recentTransactions = await this.transactionModel
         .find()
         .sort({ createdAt: -1 })
         .limit(5)
-        .populate('senderId', 'firstName lastName email')
-        .populate('receiverId', 'firstName lastName email')
+        .populate('senderId', 'firstName lastName email language')
+        .populate('receiverId', 'firstName lastName email language')
         .lean();
 
       const dailyStats = await this.buildDailyStats();
@@ -93,7 +102,7 @@ export class AdminService {
 
       let myAdminTransactions = 0;
       let myAdminVolume = 0;
-      if (userRole === 'admin') {
+      if (userRole === 'admin' && Types.ObjectId.isValid(userId)) {
         const myTxResult = await this.transactionModel.aggregate([
           {
             $match: {
@@ -121,6 +130,7 @@ export class AdminService {
           email: u.email,
           isActive: u.isActive,
           createdAt: u.createdAt,
+          language: u.language || 'fr',
         })),
         recentTransactions: recentTransactions.map((t: any) => ({
           id: t._id.toString(),
@@ -133,6 +143,7 @@ export class AdminService {
                 firstName: (t.senderId as any).firstName,
                 lastName: (t.senderId as any).lastName,
                 email: (t.senderId as any).email,
+                language: (t.senderId as any).language || 'fr',
               }
             : null,
           receiver: t.receiverId
@@ -140,6 +151,7 @@ export class AdminService {
                 firstName: (t.receiverId as any).firstName,
                 lastName: (t.receiverId as any).lastName,
                 email: (t.receiverId as any).email,
+                language: (t.receiverId as any).language || 'fr',
               }
             : null,
         })),
@@ -155,94 +167,101 @@ export class AdminService {
       };
     } catch (error) {
       console.error('❌ Erreur getDashboardStats:', error);
-      return {
-        totalUsers: 0,
-        activeUsers: 0,
-        totalTransactions: 0,
-        totalVolume: 0,
-        recentUsers: [],
-        recentTransactions: [],
-        dailyStats: [],
-        topUsers: [],
-        totalAdmins: 0,
-        totalSuperAdmins: 0,
-        adminTransactions: 0,
-        adminVolume: 0,
-        myAdminTransactions: 0,
-        myAdminVolume: 0,
-        userRole,
-      };
+      return this.getEmptyDashboardStats(userRole);
     }
   }
 
+  private getEmptyDashboardStats(userRole: string) {
+    return {
+      totalUsers: 0,
+      activeUsers: 0,
+      totalTransactions: 0,
+      totalVolume: 0,
+      recentUsers: [],
+      recentTransactions: [],
+      dailyStats: [],
+      topUsers: [],
+      totalAdmins: 0,
+      totalSuperAdmins: 0,
+      adminTransactions: 0,
+      adminVolume: 0,
+      myAdminTransactions: 0,
+      myAdminVolume: 0,
+      userRole,
+    };
+  }
+
   // ============================================================
-  // ✅ NOUVEAU : STATISTIQUES DES COMMISSIONS
+  // STATISTIQUES DES COMMISSIONS AVEC I18N
   // ============================================================
   async getCommissionStats(userId: string, userRole: string) {
     try {
-      const commissionRate = 0.5; // 0.5% de commission
+      const commissionRate = 0.5;
       let totalCommission = 0;
       let commissionTransactions = 0;
       let recentCommissions = [];
       let myCommission = 0;
       let myCommissionTransactions = 0;
 
+      const isValidId = Types.ObjectId.isValid(userId);
+
       if (userRole === 'super_admin') {
-        // ✅ SuperAdmin : commission sur TOUTES les transactions admin
         const allAdminTx = await this.transactionModel
           .find({
             status: TransactionStatus.COMPLETED,
             'metadata.adminAction': true,
           })
           .sort({ createdAt: -1 })
-          .populate('senderId', 'firstName lastName email')
-          .populate('receiverId', 'firstName lastName email')
+          .populate('senderId', 'firstName lastName email language')
+          .populate('receiverId', 'firstName lastName email language')
           .lean();
 
-        // Calculer les commissions
         commissionTransactions = allAdminTx.length;
         totalCommission = allAdminTx.reduce((sum, tx) => {
           return sum + (tx.amount * commissionRate / 100);
         }, 0);
 
-        // Dernières commissions
-        recentCommissions = allAdminTx.slice(0, 5).map((tx: any) => ({
-          id: tx._id.toString(),
-          adminName: 'Admin',
-          userName: tx.receiverId 
-            ? `${(tx.receiverId as any)?.firstName || ''} ${(tx.receiverId as any)?.lastName || ''}`.trim() 
-            : tx.senderId 
-              ? `${(tx.senderId as any)?.firstName || ''} ${(tx.senderId as any)?.lastName || ''}`.trim()
-              : 'Utilisateur',
-          amount: tx.amount,
-          commission: tx.amount * commissionRate / 100,
-          createdAt: tx.createdAt,
-          type: tx.type,
-        }));
+        recentCommissions = allAdminTx.slice(0, 5).map((tx: any) => {
+          const userLang = (tx.receiverId as any)?.language || 'fr';
+          return {
+            id: tx._id.toString(),
+            adminName: 'Admin',
+            userName: tx.receiverId 
+              ? `${(tx.receiverId as any)?.firstName || ''} ${(tx.receiverId as any)?.lastName || ''}`.trim() 
+              : tx.senderId 
+                ? `${(tx.senderId as any)?.firstName || ''} ${(tx.senderId as any)?.lastName || ''}`.trim()
+                : 'Utilisateur',
+            amount: tx.amount,
+            commission: tx.amount * commissionRate / 100,
+            createdAt: tx.createdAt,
+            type: tx.type,
+            language: userLang,
+          };
+        });
 
-        // Commission de l'admin connecté (si c'est un super_admin qui fait des transactions)
-        const myAdminTx = await this.transactionModel
-          .find({
-            status: TransactionStatus.COMPLETED,
-            'metadata.adminId': new Types.ObjectId(userId),
-          })
-          .lean();
+        if (isValidId) {
+          const myAdminTx = await this.transactionModel
+            .find({
+              status: TransactionStatus.COMPLETED,
+              'metadata.adminId': new Types.ObjectId(userId),
+            })
+            .lean();
 
-        myCommissionTransactions = myAdminTx.length;
-        myCommission = myAdminTx.reduce((sum, tx) => {
-          return sum + (tx.amount * commissionRate / 100);
-        }, 0);
+          myCommissionTransactions = myAdminTx.length;
+          myCommission = myAdminTx.reduce((sum, tx) => {
+            return sum + (tx.amount * commissionRate / 100);
+          }, 0);
+        }
 
-      } else if (userRole === 'admin') {
-        // ✅ Admin : commission sur SES propres transactions
+      } else if (userRole === 'admin' && isValidId) {
         const myTx = await this.transactionModel
           .find({
             status: TransactionStatus.COMPLETED,
             'metadata.adminId': new Types.ObjectId(userId),
           })
           .sort({ createdAt: -1 })
-          .populate('senderId', 'firstName lastName email')
-          .populate('receiverId', 'firstName lastName email')
+          .populate('senderId', 'firstName lastName email language')
+          .populate('receiverId', 'firstName lastName email language')
           .lean();
 
         myCommissionTransactions = myTx.length;
@@ -250,7 +269,6 @@ export class AdminService {
           return sum + (tx.amount * commissionRate / 100);
         }, 0);
 
-        // Dernières commissions de l'admin
         recentCommissions = myTx.slice(0, 5).map((tx: any) => ({
           id: tx._id.toString(),
           adminName: 'Moi',
@@ -263,9 +281,9 @@ export class AdminService {
           commission: tx.amount * commissionRate / 100,
           createdAt: tx.createdAt,
           type: tx.type,
+          language: (tx.receiverId as any)?.language || 'fr',
         }));
 
-        // L'admin ne voit pas les commissions des autres admins
         totalCommission = myCommission;
         commissionTransactions = myCommissionTransactions;
       }
@@ -349,7 +367,7 @@ export class AdminService {
   }
 
   // ============================================================
-  // ADMIN ACTIONS - DÉPÔT
+  // ADMIN ACTIONS - DÉPÔT AVEC I18N
   // ============================================================
   async depositMoney(
     adminId: string,
@@ -378,7 +396,6 @@ export class AdminService {
       }
     }
 
-    // ✅ Calculer la commission (0.5% pour le SuperAdmin)
     const commissionRate = 0.5;
     const commission = (amount * commissionRate) / 100;
 
@@ -391,7 +408,7 @@ export class AdminService {
       type: 'deposit',
       amount: amount,
       fee: 0,
-      commission: commission, // ✅ Ajout de la commission
+      commission: commission,
       totalAmount: amount,
       status: TransactionStatus.COMPLETED,
       description: description || `Dépôt administrateur`,
@@ -414,15 +431,51 @@ export class AdminService {
       metadata: { amount, description, qrCode, adminId, commission },
     });
 
+    // ✅ Récupérer la langue de l'utilisateur
+    const userLang = (user.language || 'fr') as Language;
+
+    // ✅ Messages traduits
+    const depositMessage = this.i18nService.translate(
+      userLang,
+      'deposit.success',
+      { amount }
+    );
+    const commissionMessage = this.i18nService.translate(
+      userLang,
+      'deposit.commission',
+      { amount: commission }
+    );
+    const balanceMessage = this.i18nService.translate(
+      userLang,
+      'notification.new_balance',
+      { balance: user.balance }
+    );
+
+    // ✅ Notification WebSocket
     this.chatGateway?.notifyUser(userId, 'balanceUpdate', {
       newBalance: user.balance,
       amount,
       type: 'deposit',
+      message: depositMessage,
+      commissionMessage: commissionMessage,
+      title: this.i18nService.translate(userLang, 'notification.deposit'),
+    });
+
+    // ✅ Notification Push pour le mobile
+    this.chatGateway?.notifyUser(userId, 'pushNotification', {
+      title: this.i18nService.translate(userLang, 'notification.deposit'),
+      body: `${depositMessage} ${commissionMessage}`,
+      data: {
+        type: 'deposit',
+        amount,
+        newBalance: user.balance,
+        commission,
+      },
     });
 
     return {
       success: true,
-      message: `Dépôt de ${amount} Ar effectué avec succès (commission: ${commission} Ar)`,
+      message: `${depositMessage} (${commissionMessage})`,
       newBalance: user.balance,
       commission: commission,
       transaction: this.toTransactionResponse(transaction),
@@ -430,7 +483,7 @@ export class AdminService {
   }
 
   // ============================================================
-  // ADMIN ACTIONS - RETRAIT
+  // ADMIN ACTIONS - RETRAIT AVEC I18N
   // ============================================================
   async withdrawMoney(
     adminId: string,
@@ -453,7 +506,10 @@ export class AdminService {
     }
 
     if (user.balance < amount) {
-      throw new BadRequestException('Solde insuffisant');
+      const userLang = (user.language || 'fr') as Language;
+      throw new BadRequestException(
+        this.i18nService.translate(userLang, 'error.insufficient_balance')
+      );
     }
 
     if (qrCode) {
@@ -463,7 +519,6 @@ export class AdminService {
       }
     }
 
-    // ✅ Calculer la commission (0.5% pour le SuperAdmin)
     const commissionRate = 0.5;
     const commission = (amount * commissionRate) / 100;
 
@@ -476,7 +531,7 @@ export class AdminService {
       type: 'withdrawal',
       amount: amount,
       fee: 0,
-      commission: commission, // ✅ Ajout de la commission
+      commission: commission,
       totalAmount: amount,
       status: TransactionStatus.COMPLETED,
       description: description || `Retrait administrateur`,
@@ -499,15 +554,51 @@ export class AdminService {
       metadata: { amount, description, qrCode, adminId, commission },
     });
 
+    // ✅ Récupérer la langue de l'utilisateur
+    const userLang = (user.language || 'fr') as Language;
+
+    // ✅ Messages traduits
+    const withdrawalMessage = this.i18nService.translate(
+      userLang,
+      'withdrawal.success',
+      { amount }
+    );
+    const commissionMessage = this.i18nService.translate(
+      userLang,
+      'withdrawal.commission',
+      { amount: commission }
+    );
+    const balanceMessage = this.i18nService.translate(
+      userLang,
+      'notification.new_balance',
+      { balance: user.balance }
+    );
+
+    // ✅ Notification WebSocket
     this.chatGateway?.notifyUser(userId, 'balanceUpdate', {
       newBalance: user.balance,
       amount,
       type: 'withdrawal',
+      message: withdrawalMessage,
+      commissionMessage: commissionMessage,
+      title: this.i18nService.translate(userLang, 'notification.withdrawal'),
+    });
+
+    // ✅ Notification Push pour le mobile
+    this.chatGateway?.notifyUser(userId, 'pushNotification', {
+      title: this.i18nService.translate(userLang, 'notification.withdrawal'),
+      body: `${withdrawalMessage} ${commissionMessage}`,
+      data: {
+        type: 'withdrawal',
+        amount,
+        newBalance: user.balance,
+        commission,
+      },
     });
 
     return {
       success: true,
-      message: `Retrait de ${amount} Ar effectué avec succès (commission: ${commission} Ar)`,
+      message: `${withdrawalMessage} (${commissionMessage})`,
       newBalance: user.balance,
       commission: commission,
       transaction: this.toTransactionResponse(transaction),
@@ -633,6 +724,7 @@ export class AdminService {
       isActive: true,
       isGoogleUser: false,
       createdAt: new Date(),
+      language: 'fr',
     });
 
     await newAdmin.save();
@@ -711,7 +803,7 @@ export class AdminService {
   }
 
   async updateAdminProfile(userId: string, updateData: any) {
-    const allowedFields = ['firstName', 'lastName', 'email', 'phoneNumber', 'bio'];
+    const allowedFields = ['firstName', 'lastName', 'email', 'phoneNumber', 'bio', 'language'];
     const sanitized: any = {};
     for (const field of allowedFields) {
       if (updateData[field] !== undefined) {
@@ -732,8 +824,8 @@ export class AdminService {
   async getAllTransactions() {
     return this.transactionModel
       .find()
-      .populate('senderId', 'firstName lastName email')
-      .populate('receiverId', 'firstName lastName email')
+      .populate('senderId', 'firstName lastName email language')
+      .populate('receiverId', 'firstName lastName email language')
       .sort({ createdAt: -1 });
   }
 
@@ -743,8 +835,8 @@ export class AdminService {
     }
     const transaction = await this.transactionModel
       .findById(transactionId)
-      .populate('senderId', 'firstName lastName email')
-      .populate('receiverId', 'firstName lastName email');
+      .populate('senderId', 'firstName lastName email language')
+      .populate('receiverId', 'firstName lastName email language');
     if (!transaction) {
       throw new NotFoundException('Transaction non trouvée');
     }
@@ -768,6 +860,8 @@ export class AdminService {
           defaultUserRole: 'user',
           maxFileSize: 150,
           sessionTimeout: 30,
+          defaultLanguage: 'fr',
+          supportedLanguages: ['fr', 'en', 'mg'],
         },
         security: {
           twoFactorAuth: false,
@@ -870,6 +964,7 @@ export class AdminService {
       createdAt: user.createdAt,
       lastLogin: user.lastLogin,
       bio: user.bio,
+      language: user.language || 'fr',
     };
   }
 

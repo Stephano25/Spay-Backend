@@ -1,4 +1,5 @@
-import { Controller, Post, Body, UseGuards, Get, Req, Res } from '@nestjs/common';
+// auth/auth.controller.ts - Ajouter ces endpoints
+import { Controller, Post, Body, UseGuards, Get, Req, Res, Patch } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -34,35 +35,37 @@ export class AuthController {
     return this.authService.changePassword(userId, changePasswordDto);
   }
 
-  // ✅ Google OAuth - Démarre le flux
-  @Get('google')
-  @UseGuards(AuthGuard('google'))
-  async googleAuth() {
-    // Redirection gérée par Passport
+  // ✅ CHANGER LA LANGUE
+  @Patch('language')
+  @UseGuards(JwtAuthGuard)
+  async changeLanguage(@Req() req, @Body('language') language: string) {
+    const userId = req.user.userId;
+    return this.authService.changeLanguage(userId, language);
   }
 
-  // ✅ Google OAuth - Callback après authentification
+  // ✅ RÉCUPÉRER LA LANGUE
+  @Get('language')
+  @UseGuards(JwtAuthGuard)
+  async getLanguage(@Req() req) {
+    const userId = req.user.userId;
+    return this.authService.getUserLanguage(userId);
+  }
+
+  // Google OAuth
+  @Get('google')
+  @UseGuards(AuthGuard('google'))
+  async googleAuth() {}
+
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))
   async googleAuthRedirect(@Req() req, @Res() res) {
     try {
       const user = req.user;
-      
       if (!user) {
-        console.error('❌ Aucun utilisateur reçu de Google');
         return res.redirect(`${process.env.FRONTEND_URL}/login?error=auth_failed`);
       }
-
-      console.log('👤 Utilisateur Google reçu:', user.email);
-
-      // ✅ Générer le token JWT
       const result = await this.authService.loginWithGoogle(user);
-      
-      // ✅ Redirection vers le frontend avec le token
-      const redirectUrl = `${process.env.FRONTEND_URL}/auth/callback?token=${result.access_token}`;
-      console.log('🔀 Redirection vers:', redirectUrl);
-      
-      return res.redirect(redirectUrl);
+      return res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${result.access_token}`);
     } catch (error) {
       console.error('❌ Erreur callback Google:', error);
       return res.redirect(`${process.env.FRONTEND_URL}/login?error=server_error`);

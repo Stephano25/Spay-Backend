@@ -1,4 +1,5 @@
-import { IsEmail, IsString, MinLength, IsOptional, Matches } from 'class-validator';
+// auth/dto/register.dto.ts
+import { IsEmail, IsString, MinLength, IsOptional, Matches, IsIn } from 'class-validator';
 
 export class RegisterDto {
   @IsEmail({}, { message: 'Email invalide' })
@@ -20,4 +21,8 @@ export class RegisterDto {
   @IsString()
   @Matches(/^[0-9]{9,10}$/, { message: 'Numéro de téléphone invalide (9-10 chiffres)' })
   phoneNumber?: string;
+
+  @IsOptional()
+  @IsIn(['fr', 'en', 'mg'], { message: 'Langue non supportée. Choisissez: fr, en, mg' })
+  language?: string;
 }

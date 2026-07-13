@@ -1,3 +1,4 @@
+// users/schemas/user.schema.ts
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 
@@ -65,6 +66,10 @@ export class User {
   @Prop({ type: Object, default: {} })
   settings: Record<string, any>;
 
+  // ✅ AJOUT : Langue préférée de l'utilisateur
+  @Prop({ default: 'fr' })
+  language: string;
+
   @Prop()
   createdAt?: Date;
 
@@ -77,3 +82,4 @@ export const UserSchema = SchemaFactory.createForClass(User);
 UserSchema.index({ role: 1 });
 UserSchema.index({ isActive: 1 });
 UserSchema.index({ firstName: 'text', lastName: 'text' });
+UserSchema.index({ language: 1 });

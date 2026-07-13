@@ -1,3 +1,4 @@
+// auth/auth.service.ts
 import {
   Injectable,
   ConflictException,
@@ -16,6 +17,7 @@ import { User, UserDocument, UserRole } from '../users/schemas/user.schema';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { I18nService, Language } from '../i18n/i18n.service';
 
 @Injectable()
 export class AuthService {
@@ -25,6 +27,7 @@ export class AuthService {
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     private jwtService: JwtService,
     private configService: ConfigService,
+    private i18nService: I18nService,
   ) {}
 
   async register(registerDto: RegisterDto) {
@@ -45,6 +48,9 @@ export class AuthService {
     const hashedPassword = await bcrypt.hash(registerDto.password, 10);
     const qrCode = await this.generateUniqueQrCode();
 
+    // ✅ Définir la langue par défaut
+    const language = registerDto.language || 'fr';
+
     const user = new this.userModel({
       email: registerDto.email.toLowerCase(),
       password: hashedPassword,
@@ -56,6 +62,7 @@ export class AuthService {
       role: UserRole.USER,
       isActive: true,
       lastLogin: new Date(),
+      language: language, // ✅ AJOUT
     });
 
     await user.save();
@@ -135,7 +142,7 @@ export class AuthService {
     return { message: 'Mot de passe modifié avec succès' };
   }
 
-  // ✅ GOOGLE OAUTH - CORRIGÉ
+  // ✅ GOOGLE OAUTH
   async loginWithGoogle(googleUser: any) {
     this.logger.log(`🔑 Connexion Google: ${googleUser.email}`);
 
@@ -160,6 +167,7 @@ export class AuthService {
         isActive: true,
         lastLogin: new Date(),
         isGoogleUser: true,
+        language: 'fr', // ✅ Langue par défaut pour Google
       });
       await user.save();
       this.logger.log(`✅ Utilisateur Google créé: ${email}`);
@@ -184,6 +192,45 @@ export class AuthService {
     };
   }
 
+  // ✅ CHANGER LA LANGUE DE L'UTILISATEUR
+  async changeLanguage(userId: string, language: string) {
+    const validLanguages: Language[] = ['fr', 'en', 'mg'];
+    if (!validLanguages.includes(language as Language)) {
+      throw new BadRequestException(
+        this.i18nService.t('error.invalid_language')
+      );
+    }
+    
+    const user = await this.userModel.findByIdAndUpdate(
+      userId,
+      { language },
+      { new: true }
+    ).select('-password');
+    
+    if (!user) {
+      throw new NotFoundException(
+        this.i18nService.t('error.user_not_found')
+      );
+    }
+    
+    this.logger.log(`🌍 Langue changée pour ${user.email}: ${language}`);
+    
+    return {
+      success: true,
+      language: user.language,
+      message: this.i18nService.translate(language as Language, 'common.success'),
+    };
+  }
+
+  // ✅ RÉCUPÉRER LA LANGUE DE L'UTILISATEUR
+  async getUserLanguage(userId: string) {
+    const user = await this.userModel.findById(userId).select('language');
+    if (!user) {
+      throw new NotFoundException(this.i18nService.t('error.user_not_found'));
+    }
+    return { language: user.language || 'fr' };
+  }
+
   async createAdminUser(email: string, password: string, firstName: string, lastName: string) {
     this.logger.log(`📝 Création admin: ${email}`);
 
@@ -205,6 +252,7 @@ export class AuthService {
       role: UserRole.ADMIN,
       isActive: true,
       lastLogin: new Date(),
+      language: 'fr',
     });
 
     await user.save();
@@ -233,6 +281,7 @@ export class AuthService {
       role: UserRole.SUPER_ADMIN,
       isActive: true,
       lastLogin: new Date(),
+      language: 'fr',
     });
 
     await user.save();
@@ -254,6 +303,7 @@ export class AuthService {
         userId: user._id.toString(),
         email: user.email,
         role: user.role,
+        language: user.language || 'fr', // ✅ Ajout de la langue dans le token
       },
       {
         secret: secret,
@@ -291,6 +341,7 @@ export class AuthService {
       lastLogin: user.lastLogin,
       bio: user.bio,
       isGoogleUser: user.isGoogleUser || false,
+      language: user.language || 'fr', // ✅ AJOUT
     };
   }
 }
