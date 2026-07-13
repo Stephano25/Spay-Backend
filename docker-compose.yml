@@ -1,9 +1,12 @@
-# docker-compose.yml (version corrigée - sans la ligne version)
+# docker-compose.yml
 services:
+  # ============================================================
+  # MONGODB - Base de données
+  # ============================================================
   mongodb:
     image: mongo:7
     container_name: spaye-mongodb
-    restart: always
+    restart: unless-stopped
     environment:
       MONGO_INITDB_ROOT_USERNAME: admin
       MONGO_INITDB_ROOT_PASSWORD: spaye2024
@@ -20,27 +23,56 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
+  # ============================================================
+  # BACKEND - API NestJS
+  # ============================================================
   backend:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: spaye-backend
-    restart: always
+    restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
+      # Node
       - NODE_ENV=production
       - PORT=3000
-      - MONGODB_URI=mongodb://admin:spaye2024@mongodb:27017/spaye?authSource=admin
+      - NODE_OPTIONS=--max-old-space-size=512
+      
+      # MongoDB
+      - MONGODB_URI=mongodb://admin:spaye2024@mongodb:27017/spaye?authSource=admin&retryWrites=true&w=majority
+      
+      # JWT
       - JWT_SECRET=spaye-production-super-secret-key-2024-change-me
       - JWT_EXPIRES_IN=7d
+      
+      # CORS
       - FRONTEND_URL=http://localhost:4200
       - CORS_ORIGIN=http://localhost,http://localhost:4200,http://localhost:3000,http://localhost:8081,http://localhost:19000,http://localhost:19001,http://localhost:19002,http://192.168.188.135:8081,http://192.168.188.135:19000,http://192.168.188.135:19001,http://192.168.188.135:19002
-      - GOOGLE_CLIENT_ID=395910776421-rakkus38k5jjjeg1oi1hs1pfusv57tl8.apps.googleusercontent.com
-      - GOOGLE_CLIENT_SECRET=GOCSPX-VOTRE_VRAI_SECRET_ICI
-      - GOOGLE_CALLBACK_URL=http://localhost:3000/api/auth/google/callback
-      - SESSION_SECRET=spaye-session-secret-tres-securise-2024
+      
+      # Google OAuth
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-395910776421-rakkus38k5jjjeg1oi1hs1pfusv57tl8.apps.googleusercontent.com}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-GOCSPX-VOTRE_VRAI_SECRET_ICI}
+      - GOOGLE_CALLBACK_URL=${GOOGLE_CALLBACK_URL:-http://localhost:3000/api/auth/google/callback}
+      
+      # Session
+      - SESSION_SECRET=${SESSION_SECRET:-spaye-session-secret-tres-securise-2024}
+      
+      # Uploads
       - UPLOAD_DIR=./uploads
       - MAX_FILE_SIZE=157286400
+      
+      # Langues supportées
+      - SUPPORTED_LANGUAGES=fr,en,mg
+      - DEFAULT_LANGUAGE=fr
     depends_on:
       mongodb:
         condition: service_healthy
@@ -48,14 +80,25 @@ services:
       - spaye-network
     volumes:
       - uploads:/app/uploads
+      - ./logs:/app/logs
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
-  # Backend en développement (optionnel)
+  # ============================================================
+  # BACKEND DEV - Mode développement (optionnel)
+  # ============================================================
   backend-dev:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
     container_name: spaye-backend-dev
-    restart: always
+    restart: unless-stopped
     ports:
       - "3001:3000"
+      - "9229:9229"  # Debug port
     environment:
       - NODE_ENV=development
       - PORT=3000
@@ -63,6 +106,8 @@ services:
       - JWT_SECRET=spaye-dev-secret-key
       - JWT_EXPIRES_IN=7d
       - CORS_ORIGIN=*
+      - SUPPORTED_LANGUAGES=fr,en,mg
+      - DEFAULT_LANGUAGE=fr
     depends_on:
       mongodb:
         condition: service_healthy
@@ -71,11 +116,47 @@ services:
     volumes:
       - ./src:/app/src
       - ./dist:/app/dist
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+      - /app/node_modules
     command: npm run start:dev
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================
+  # MONGO EXPRESS - Interface admin MongoDB (optionnel)
+  # ============================================================
+  mongo-express:
+    image: mongo-express:latest
+    container_name: spaye-mongo-express
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: admin
+      ME_CONFIG_MONGODB_ADMINPASSWORD: spaye2024
+      ME_CONFIG_MONGODB_URL: mongodb://admin:spaye2024@mongodb:27017/
+      ME_CONFIG_BASICAUTH_USERNAME: admin
+      ME_CONFIG_BASICAUTH_PASSWORD: spaye2024
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - spaye-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   mongodb_data:
+    driver: local
   uploads:
+    driver: local
 
 networks:
   spaye-network:
