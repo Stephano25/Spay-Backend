@@ -7,7 +7,7 @@ const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 
 // Configuration - Utiliser l'URI de connexion de Docker
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://admin:password123@mongodb:27017/spaye?authSource=admin';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://admin:spaye2024@mongodb:27017/spaye?authSource=admin';
 
 // Définition du schéma User (simplifié pour l'init)
 const userSchema = new mongoose.Schema({
@@ -108,6 +108,22 @@ async function initUsers() {
 
     console.log('✅ Connecté à MongoDB\n');
 
+    // Vérifier si des utilisateurs existent déjà
+    const existingCount = await User.countDocuments();
+    if (existingCount > 0) {
+      console.log(`ℹ️ ${existingCount} utilisateur(s) existent déjà dans la base.\n`);
+      console.log('📋 UTILISATEURS EXISTANTS:');
+      console.log('='.repeat(60));
+      
+      const existingUsers = await User.find().select('email role firstName lastName').lean();
+      for (const user of existingUsers) {
+        console.log(`   ${user.email} (${user.role}) - ${user.firstName} ${user.lastName}`);
+      }
+      console.log('='.repeat(60));
+      console.log('\n❓ Voulez-vous continuer et ajouter les utilisateurs manquants ?');
+      console.log('   Si vous voulez tout réinitialiser, exécutez: docker-compose exec mongodb mongosh -u admin -p spaye2024 --authenticationDatabase admin --eval "use spaye; db.users.drop();"\n');
+    }
+
     let stats = { created: 0, updated: 0, skipped: 0, total: 0 };
 
     // Traiter chaque utilisateur
@@ -177,7 +193,7 @@ async function initUsers() {
     console.log('👤 TEST: test@gmail.com / Test@123');
     console.log('='.repeat(60));
     console.log('💡 Pour vous connecter:');
-    console.log('   POST /api/auth/login');
+    console.log('   POST http://localhost:3000/api/auth/login');
     console.log('   { "email": "admin@spaye.com", "password": "admin@2026" }');
     console.log('='.repeat(60));
 
@@ -187,6 +203,7 @@ async function initUsers() {
 
   } catch (error) {
     console.error('❌ Erreur fatale:', error.message);
+    console.error(error.stack);
     process.exit(1);
   }
 }
