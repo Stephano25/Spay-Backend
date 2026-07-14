@@ -1,21 +1,21 @@
-# Dockerfile.dev
+# backend/Dockerfile.dev
 FROM node:20-alpine
 
 WORKDIR /app
 
-# Installer les dépendances
+# Copier les fichiers package
 COPY package*.json ./
-RUN npm install && npm cache clean --force
+COPY package-lock*.json ./
 
-# Copier le reste du code
+# Installer les dépendances
+RUN npm install --legacy-peer-deps
+
+# Copier le code source
 COPY . .
 
-# Installer nodemon pour le hot-reload
-RUN npm install -g nodemon
-
-# Créer les dossiers uploads
+# Créer le dossier uploads
 RUN mkdir -p /app/uploads/profiles /app/uploads/temp
 
-EXPOSE 3000 9229
+EXPOSE 3000
 
 CMD ["npm", "run", "start:dev"]

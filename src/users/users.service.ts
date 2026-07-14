@@ -1,13 +1,17 @@
-// users/users.service.ts - AJOUTER CES MÉTHODES
-
-import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
+// backend/src/users/users.service.ts
+import { 
+  Injectable, 
+  NotFoundException, 
+  BadRequestException, 
+  ConflictException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
-import { User, UserDocument } from './schemas/user.schema';
+import { User, UserDocument, UserRole } from './schemas/user.schema';
 
 const DEFAULT_SETTINGS = {
   general: { autoplayVideos: true, nsfwFilter: true },
@@ -42,7 +46,7 @@ export class UsersService {
   constructor(@InjectModel(User.name) private userModel: Model<UserDocument>) {}
 
   // ============================================================
-  // MÉTHODES EXISTANTES (à conserver)
+  // MÉTHODES DE BASE
   // ============================================================
 
   async findAll(): Promise<any[]> {
@@ -51,6 +55,9 @@ export class UsersService {
   }
 
   async findById(userId: string): Promise<any> {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('ID utilisateur invalide');
+    }
     const user = await this.userModel.findById(userId).select('-password');
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
@@ -71,11 +78,18 @@ export class UsersService {
   }
 
   async create(userData: Partial<User>): Promise<UserDocument> {
+    if (!userData.qrCode) {
+      userData.qrCode = this.generateQRCode();
+    }
     const newUser = new this.userModel(userData);
     return newUser.save();
   }
 
   async update(userId: string, updateData: any): Promise<any> {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('ID utilisateur invalide');
+    }
+
     const sanitized = { ...updateData };
     for (const field of PROTECTED_FIELDS) {
       delete sanitized[field];
@@ -93,13 +107,43 @@ export class UsersService {
   }
 
   async delete(userId: string): Promise<void> {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('ID utilisateur invalide');
+    }
+
+    const user = await this.userModel.findById(userId);
+    if (user && user.profilePicture) {
+      this.tryDeleteLocalFile(user.profilePicture);
+    }
+
     const result = await this.userModel.deleteOne({ _id: userId }).exec();
     if (result.deletedCount === 0) {
       throw new NotFoundException('Utilisateur non trouvé');
     }
   }
 
+  async toggleUserStatus(userId: string, isActive: boolean): Promise<any> {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('ID utilisateur invalide');
+    }
+
+    const user = await this.userModel.findByIdAndUpdate(
+      userId,
+      { isActive },
+      { new: true }
+    ).select('-password');
+    
+    if (!user) {
+      throw new NotFoundException('Utilisateur non trouvé');
+    }
+    return this.toResponse(user);
+  }
+
   async search(query: string): Promise<any[]> {
+    if (!query || query.length < 2) {
+      return [];
+    }
+
     const regex = new RegExp(query, 'i');
     const users = await this.userModel
       .find({
@@ -125,6 +169,10 @@ export class UsersService {
   }
 
   async updateBalance(userId: string, amount: number): Promise<any> {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('ID utilisateur invalide');
+    }
+
     const user = await this.userModel.findById(userId);
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
@@ -134,7 +182,15 @@ export class UsersService {
     return this.toResponse(user);
   }
 
+  // ============================================================
+  // PARAMÈTRES UTILISATEUR
+  // ============================================================
+
   async getUserSettings(userId: string): Promise<any> {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('ID utilisateur invalide');
+    }
+
     const user = await this.userModel.findById(userId).select('settings');
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
@@ -152,6 +208,10 @@ export class UsersService {
   }
 
   async updateUserSettings(userId: string, settings: any): Promise<any> {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('ID utilisateur invalide');
+    }
+
     const current = await this.getUserSettings(userId);
     const merged = { ...current, ...settings };
 
@@ -166,23 +226,46 @@ export class UsersService {
     return merged;
   }
 
+  // ============================================================
+  // PHOTO DE PROFIL - CORRIGÉ
+  // ============================================================
+
   async updateProfilePicture(userId: string, url: string): Promise<any> {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('ID utilisateur invalide');
+    }
+
     const user = await this.userModel.findById(userId);
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
     }
-    this.tryDeleteLocalFile(user.profilePicture);
+    
+    // Supprimer l'ancienne photo si elle existe
+    if (user.profilePicture) {
+      this.tryDeleteLocalFile(user.profilePicture);
+    }
+    
     user.profilePicture = url;
     await user.save();
+    
+    console.log(`✅ Photo de profil mise à jour pour l'utilisateur ${userId}: ${url}`);
     return this.toResponse(user);
   }
 
   async deleteProfilePicture(userId: string): Promise<any> {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('ID utilisateur invalide');
+    }
+
     const user = await this.userModel.findById(userId);
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
     }
-    this.tryDeleteLocalFile(user.profilePicture);
+    
+    if (user.profilePicture) {
+      this.tryDeleteLocalFile(user.profilePicture);
+    }
+    
     user.profilePicture = null;
     await user.save();
     return this.toResponse(user);
@@ -190,22 +273,51 @@ export class UsersService {
 
   private tryDeleteLocalFile(url?: string | null): void {
     if (!url || typeof url !== 'string') return;
-    if (!url.startsWith('/uploads/')) return;
+    
+    const filename = url.split('/').pop();
+    if (!filename) return;
+    
     try {
-      const filePath = path.join(process.cwd(), url);
+      const filePath = path.join(process.cwd(), 'uploads', 'profiles', filename);
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
+        console.log(`🗑️ Fichier supprimé: ${filePath}`);
       }
-    } catch {
-      // Non bloquant
+    } catch (error) {
+      console.warn(`⚠️ Impossible de supprimer le fichier: ${error.message}`);
     }
   }
 
   // ============================================================
-  // ✅ NOUVELLES MÉTHODES POUR LE FRONTEND
+  // PROFIL
+  // ============================================================
+
+  async updateProfile(userId: string, updateData: any): Promise<any> {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('ID utilisateur invalide');
+    }
+
+    const user = await this.userModel.findByIdAndUpdate(
+      userId,
+      updateData,
+      { new: true }
+    ).select('-password');
+
+    if (!user) {
+      throw new NotFoundException('Utilisateur non trouvé');
+    }
+    return this.toResponse(user);
+  }
+
+  // ============================================================
+  // AMIS
   // ============================================================
 
   async getFriendsCount(userId: string): Promise<{ count: number }> {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('ID utilisateur invalide');
+    }
+
     const user = await this.userModel.findById(userId);
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
@@ -214,16 +326,14 @@ export class UsersService {
   }
 
   async getPostsCount(userId: string): Promise<{ count: number }> {
-    const user = await this.userModel.findById(userId);
-    if (!user) {
-      throw new NotFoundException('Utilisateur non trouvé');
-    }
-    // Si vous avez un modèle Post, retournez le nombre de posts
-    // Sinon, retournez 0
     return { count: 0 };
   }
 
   async getFriends(userId: string): Promise<any[]> {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('ID utilisateur invalide');
+    }
+
     const user = await this.userModel.findById(userId)
       .populate('friends', 'firstName lastName email profilePicture');
     if (!user) {
@@ -242,14 +352,16 @@ export class UsersService {
   }
 
   async getCloseFriends(userId: string): Promise<any[]> {
-    // Simuler des amis proches
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('ID utilisateur invalide');
+    }
+
     const user = await this.userModel.findById(userId)
       .populate('friends', 'firstName lastName email profilePicture');
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
     }
     
-    // Retourner les 3 premiers amis comme "amis proches"
     const friends = (user.friends || []).slice(0, 3);
     return friends.map((friend: any) => ({
       id: friend._id.toString(),
@@ -260,13 +372,16 @@ export class UsersService {
   }
 
   async getAcquaintances(userId: string): Promise<any[]> {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('ID utilisateur invalide');
+    }
+
     const user = await this.userModel.findById(userId)
       .populate('friends', 'firstName lastName email profilePicture');
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
     }
     
-    // Retourner les amis après les 3 premiers comme "connaissances"
     const friends = (user.friends || []).slice(3, 8);
     return friends.map((friend: any) => ({
       id: friend._id.toString(),
@@ -277,26 +392,27 @@ export class UsersService {
   }
 
   async getFriendRequests(userId: string): Promise<any[]> {
-    // Simuler des demandes d'amis (si vous avez un modèle FriendRequest)
     return [];
   }
 
   async getBlockedUsers(userId: string): Promise<any[]> {
-    // Simuler des utilisateurs bloqués
     return [];
   }
 
   async getFriendSuggestions(userId: string): Promise<any[]> {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('ID utilisateur invalide');
+    }
+
     const user = await this.userModel.findById(userId);
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
     }
     
-    // Trouver des suggestions d'amis
     const friendIds = user.friends || [];
     const suggestions = await this.userModel
       .find({
-        _id: { $nin: [userId, ...friendIds].map(id => new Types.ObjectId(id)) },
+        _id: { $nin: [new Types.ObjectId(userId), ...friendIds.map(id => new Types.ObjectId(id))] },
         isActive: true,
       })
       .limit(5)
@@ -313,143 +429,19 @@ export class UsersService {
     }));
   }
 
-  async getDevices(userId: string): Promise<any[]> {
-    // Simuler des appareils connectés
-    return [
-      {
-        id: 'device-1',
-        name: 'Chrome sur Windows',
-        location: 'Paris, France',
-        lastActive: new Date(),
-      },
-      {
-        id: 'device-2',
-        name: 'Safari sur iPhone',
-        location: 'Paris, France',
-        lastActive: new Date(Date.now() - 3600000),
-      }
-    ];
-  }
-
-  async changeEmail(userId: string, email: string): Promise<any> {
-    const existingUser = await this.userModel.findOne({ email });
-    if (existingUser && existingUser._id.toString() !== userId) {
-      throw new ConflictException('Email déjà utilisé');
-    }
-
-    const user = await this.userModel.findByIdAndUpdate(
-      userId,
-      { email },
-      { new: true }
-    ).select('-password');
-
-    if (!user) {
-      throw new NotFoundException('Utilisateur non trouvé');
-    }
-    return { success: true, email: user.email };
-  }
-
-  async changePhone(userId: string, phone: string): Promise<any> {
-    const user = await this.userModel.findByIdAndUpdate(
-      userId,
-      { phoneNumber: phone },
-      { new: true }
-    ).select('-password');
-
-    if (!user) {
-      throw new NotFoundException('Utilisateur non trouvé');
-    }
-    return { success: true, phone: user.phoneNumber };
-  }
-
-  async deactivateAccount(userId: string, password: string): Promise<any> {
-    const user = await this.userModel.findById(userId);
-    if (!user) {
-      throw new NotFoundException('Utilisateur non trouvé');
-    }
-
-    const isValid = await bcrypt.compare(password, user.password);
-    if (!isValid) {
-      throw new BadRequestException('Mot de passe incorrect');
-    }
-
-    user.isActive = false;
-    await user.save();
-    return { success: true };
-  }
-
-  async deleteAccount(userId: string, password: string): Promise<any> {
-    const user = await this.userModel.findById(userId);
-    if (!user) {
-      throw new NotFoundException('Utilisateur non trouvé');
-    }
-
-    const isValid = await bcrypt.compare(password, user.password);
-    if (!isValid) {
-      throw new BadRequestException('Mot de passe incorrect');
-    }
-
-    await this.userModel.findByIdAndDelete(userId);
-    return { success: true };
-  }
-
-  async downloadUserData(userId: string): Promise<any> {
-    const user = await this.userModel.findById(userId)
-      .select('-password')
-      .populate('friends', 'firstName lastName email');
-
-    if (!user) {
-      throw new NotFoundException('Utilisateur non trouvé');
-    }
-
-    const userData = {
-      profile: {
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        phoneNumber: user.phoneNumber,
-        bio: user.bio,
-        createdAt: user.createdAt,
-      },
-      settings: user.settings || {},
-      friends: (user.friends || []).map((f: any) => ({
-        id: f._id.toString(),
-        name: `${f.firstName} ${f.lastName}`,
-        email: f.email,
-      })),
-    };
-
-    return userData;
-  }
-
-  async updateProfile(userId: string, updateData: any): Promise<any> {
-    const user = await this.userModel.findByIdAndUpdate(
-      userId,
-      updateData,
-      { new: true }
-    ).select('-password');
-
-    if (!user) {
-      throw new NotFoundException('Utilisateur non trouvé');
-    }
-    return this.toResponse(user);
-  }
-
-  // ============================================================
-  // GESTION DES AMIS
-  // ============================================================
-
   async acceptFriendRequest(userId: string, requestId: string): Promise<any> {
-    // Simuler l'acceptation d'une demande d'ami
     return { success: true };
   }
 
   async rejectFriendRequest(userId: string, requestId: string): Promise<any> {
-    // Simuler le refus d'une demande d'ami
     return { success: true };
   }
 
   async sendFriendRequest(userId: string, friendId: string): Promise<any> {
+    if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(friendId)) {
+      throw new BadRequestException('ID utilisateur invalide');
+    }
+
     if (userId === friendId) {
       throw new BadRequestException('Vous ne pouvez pas vous ajouter vous-même');
     }
@@ -461,11 +453,14 @@ export class UsersService {
       throw new NotFoundException('Utilisateur non trouvé');
     }
 
-    // Simuler l'envoi d'une demande d'ami
     return { success: true };
   }
 
   async unfriend(userId: string, friendId: string): Promise<any> {
+    if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(friendId)) {
+      throw new BadRequestException('ID utilisateur invalide');
+    }
+
     const user = await this.userModel.findById(userId);
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
@@ -489,8 +484,152 @@ export class UsersService {
   }
 
   // ============================================================
+  // GESTION DU COMPTE
+  // ============================================================
+
+  async changeEmail(userId: string, email: string): Promise<any> {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('ID utilisateur invalide');
+    }
+
+    const existingUser = await this.userModel.findOne({ email });
+    if (existingUser && existingUser._id.toString() !== userId) {
+      throw new ConflictException('Email déjà utilisé');
+    }
+
+    const user = await this.userModel.findByIdAndUpdate(
+      userId,
+      { email },
+      { new: true }
+    ).select('-password');
+
+    if (!user) {
+      throw new NotFoundException('Utilisateur non trouvé');
+    }
+    return { success: true, email: user.email };
+  }
+
+  async changePhone(userId: string, phone: string): Promise<any> {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('ID utilisateur invalide');
+    }
+
+    const user = await this.userModel.findByIdAndUpdate(
+      userId,
+      { phoneNumber: phone },
+      { new: true }
+    ).select('-password');
+
+    if (!user) {
+      throw new NotFoundException('Utilisateur non trouvé');
+    }
+    return { success: true, phone: user.phoneNumber };
+  }
+
+  async deactivateAccount(userId: string, password: string): Promise<any> {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('ID utilisateur invalide');
+    }
+
+    const user = await this.userModel.findById(userId);
+    if (!user) {
+      throw new NotFoundException('Utilisateur non trouvé');
+    }
+
+    const isValid = await bcrypt.compare(password, user.password);
+    if (!isValid) {
+      throw new BadRequestException('Mot de passe incorrect');
+    }
+
+    user.isActive = false;
+    await user.save();
+    return { success: true };
+  }
+
+  async deleteAccount(userId: string, password: string): Promise<any> {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('ID utilisateur invalide');
+    }
+
+    const user = await this.userModel.findById(userId);
+    if (!user) {
+      throw new NotFoundException('Utilisateur non trouvé');
+    }
+
+    const isValid = await bcrypt.compare(password, user.password);
+    if (!isValid) {
+      throw new BadRequestException('Mot de passe incorrect');
+    }
+
+    if (user.profilePicture) {
+      this.tryDeleteLocalFile(user.profilePicture);
+    }
+
+    await this.userModel.findByIdAndDelete(userId);
+    return { success: true };
+  }
+
+  async downloadUserData(userId: string): Promise<any> {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('ID utilisateur invalide');
+    }
+
+    const user = await this.userModel.findById(userId)
+      .select('-password')
+      .populate('friends', 'firstName lastName email');
+
+    if (!user) {
+      throw new NotFoundException('Utilisateur non trouvé');
+    }
+
+    const userData = {
+      profile: {
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        phoneNumber: user.phoneNumber,
+        bio: user.bio,
+        birthday: user.birthday,
+        gender: user.gender,
+        createdAt: user.createdAt,
+      },
+      settings: user.settings || {},
+      friends: (user.friends || []).map((f: any) => ({
+        id: f._id.toString(),
+        name: `${f.firstName} ${f.lastName}`,
+        email: f.email,
+      })),
+    };
+
+    return userData;
+  }
+
+  // ============================================================
   // GESTION DES APPAREILS
   // ============================================================
+
+  async getDevices(userId: string): Promise<any[]> {
+    return [
+      {
+        id: 'device-1',
+        name: 'Chrome sur Windows',
+        location: 'Paris, France',
+        lastActive: new Date(),
+      },
+      {
+        id: 'device-2',
+        name: 'Safari sur iPhone',
+        location: 'Paris, France',
+        lastActive: new Date(Date.now() - 3600000),
+      },
+      {
+        id: 'device-3',
+        name: 'Firefox sur Linux',
+        location: 'Lyon, France',
+        lastActive: new Date(Date.now() - 86400000),
+      }
+    ];
+  }
 
   async revokeDevice(userId: string, deviceId: string): Promise<any> {
     return { success: true };
@@ -509,6 +648,14 @@ export class UsersService {
     return { success: true };
   }
 
+  // ============================================================
+  // UTILITAIRES
+  // ============================================================
+
+  private generateQRCode(): string {
+    return crypto.randomBytes(16).toString('hex').toUpperCase();
+  }
+
   private toResponse(user: UserDocument): any {
     return {
       id: user._id.toString(),
@@ -524,7 +671,11 @@ export class UsersService {
       isActive: user.isActive,
       createdAt: user.createdAt,
       lastLogin: user.lastLogin,
-      bio: user.bio,
+      bio: user.bio || '',
+      birthday: user.birthday,
+      gender: user.gender,
+      language: user.language || 'fr',
+      settings: user.settings || DEFAULT_SETTINGS,
     };
   }
 }

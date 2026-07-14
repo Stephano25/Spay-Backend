@@ -1,3 +1,4 @@
+// src/transactions/transactions.controller.ts
 import { Controller, Get, Post, Body, UseGuards, Req } from '@nestjs/common';
 import { TransactionsService } from './transactions.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -10,25 +11,25 @@ export class TransactionsController {
 
   @Get('user/stats')
   async getUserStats(@Req() req) {
-    const userId = req.user.userId;
+    const userId = req.user.id || req.user.userId;
     return this.transactionsService.getDashboardStats(userId);
   }
 
   @Get('user')
   async getUserTransactions(@Req() req) {
-    const userId = req.user.userId;
+    const userId = req.user.id || req.user.userId;
     return this.transactionsService.getUserTransactions(userId);
   }
 
   @Get('all')
   async getAllTransactions(@Req() req) {
-    const userId = req.user.userId;
+    const userId = req.user.id || req.user.userId;
     return this.transactionsService.getUserTransactions(userId);
   }
 
   @Post('send')
   async sendMoney(@Req() req, @Body() sendMoneyDto: SendMoneyDto) {
-    const userId = req.user.userId;
+    const userId = req.user.id || req.user.userId;
     return this.transactionsService.sendMoney(userId, sendMoneyDto);
   }
 
@@ -37,7 +38,7 @@ export class TransactionsController {
     @Req() req,
     @Body() data: { operator: string; phoneNumber: string; amount: number }
   ) {
-    const userId = req.user.userId;
+    const userId = req.user.id || req.user.userId;
     return this.transactionsService.mobileMoneyTransfer(
       userId,
       data.operator,
@@ -48,7 +49,7 @@ export class TransactionsController {
 
   @Post('scan-pay')
   async scanAndPay(@Req() req, @Body() data: { receiverQrCode: string; amount: number; description?: string }) {
-    const userId = req.user.userId;
+    const userId = req.user.id || req.user.userId;
     return this.transactionsService.scanAndPay(userId, data.receiverQrCode, data.amount);
   }
 }

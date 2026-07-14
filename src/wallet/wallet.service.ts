@@ -1,3 +1,4 @@
+// src/wallet/wallet.service.ts
 import {
   Injectable,
   NotFoundException,
@@ -11,8 +12,6 @@ import { User, UserDocument } from '../users/schemas/user.schema';
 import {
   Transaction,
   TransactionDocument,
-  TransactionType,
-  TransactionStatus,
 } from '../transactions/schemas/transaction.schema';
 
 @Injectable()
@@ -23,7 +22,10 @@ export class WalletService {
     @InjectModel(Transaction.name) private txModel: Model<TransactionDocument>,
   ) {}
 
-  async getWallet(userId: string) {
+  /**
+   * Récupère ou crée un wallet pour l'utilisateur
+   */
+  private async getOrCreateWallet(userId: string): Promise<WalletDocument> {
     const user = await this.userModel.findById(userId);
     if (!user) throw new NotFoundException('Utilisateur non trouvé');
 
@@ -32,19 +34,34 @@ export class WalletService {
     if (!wallet) {
       wallet = new this.walletModel({
         userId: new Types.ObjectId(userId),
-        balance: user.balance,
+        balance: user.balance || 0,
         currency: 'Ar',
         qrCode: user.qrCode,
         dailyLimit: 5000000,
         monthlyLimit: 50000000,
         isActive: true,
+        todaySpent: 0,
+        monthSpent: 0,
       });
       await wallet.save();
+      console.log(`✅ Wallet créé pour l'utilisateur ${userId}`);
     } else {
+      // Synchroniser le solde
       wallet.balance = user.balance;
       wallet.qrCode = user.qrCode;
       await wallet.save();
     }
+
+    return wallet;
+  }
+
+  /**
+   * Récupère les informations du wallet
+   */
+  async getWallet(userId: string) {
+    const wallet = await this.getOrCreateWallet(userId);
+    const user = await this.userModel.findById(userId);
+    if (!user) throw new NotFoundException('Utilisateur non trouvé');
 
     const stats = await this.computeStats(userId, wallet);
 
@@ -57,18 +74,26 @@ export class WalletService {
       dailyLimit: wallet.dailyLimit,
       monthlyLimit: wallet.monthlyLimit,
       isActive: wallet.isActive,
+      todaySpent: wallet.todaySpent || 0,
+      monthSpent: wallet.monthSpent || 0,
       createdAt: wallet.createdAt,
       updatedAt: wallet.updatedAt,
       ...stats,
     };
   }
 
+  /**
+   * Récupère uniquement le solde
+   */
   async getBalance(userId: string) {
     const user = await this.userModel.findById(userId).select('balance');
     if (!user) throw new NotFoundException('Utilisateur non trouvé');
     return { balance: user.balance, currency: 'Ar' };
   }
 
+  /**
+   * Génère un QR code pour recevoir de l'argent
+   */
   async generateReceiveQRCode(userId: string, amount?: number) {
     const user = await this.userModel.findById(userId);
     if (!user) throw new NotFoundException('Utilisateur non trouvé');
@@ -90,6 +115,9 @@ export class WalletService {
     };
   }
 
+  /**
+   * Scan un QR code
+   */
   async scanQRCode(userId: string, qrData: string) {
     let parsed: any;
     try {
@@ -119,6 +147,9 @@ export class WalletService {
     };
   }
 
+  /**
+   * Envoyer de l'argent à un autre utilisateur
+   */
   async sendMoney(userId: string, receiverId: string, amount: number, description?: string) {
     if (userId === receiverId) {
       throw new BadRequestException("Vous ne pouvez pas vous envoyer d'argent à vous-même");
@@ -141,15 +172,24 @@ export class WalletService {
     await this.txModel.create({
       senderId: new Types.ObjectId(userId),
       receiverId: new Types.ObjectId(receiverId),
-      type: TransactionType.TRANSFER,
+      type: 'transfer',
       amount,
       fee: 0,
       totalAmount: amount,
-      status: TransactionStatus.COMPLETED,
+      status: 'completed',
       description: description || `Transfert vers ${receiver.firstName} ${receiver.lastName}`,
       reference,
       paymentMethod: 'wallet',
     });
+
+    // Mettre à jour le wallet
+    const senderWallet = await this.walletModel.findOne({ userId: new Types.ObjectId(userId) });
+    if (senderWallet) {
+      senderWallet.balance = sender.balance;
+      senderWallet.todaySpent = (senderWallet.todaySpent || 0) + amount;
+      senderWallet.monthSpent = (senderWallet.monthSpent || 0) + amount;
+      await senderWallet.save();
+    }
 
     return {
       success: true,
@@ -164,6 +204,9 @@ export class WalletService {
     };
   }
 
+  /**
+   * Déposer de l'argent
+   */
   async deposit(userId: string, amount: number, paymentMethod: string) {
     if (amount <= 0) throw new BadRequestException('Montant invalide');
 
@@ -176,19 +219,29 @@ export class WalletService {
     const reference = `DEP-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
     await this.txModel.create({
       senderId: new Types.ObjectId(userId),
-      type: TransactionType.DEPOSIT,
+      type: 'deposit',
       amount,
       fee: 0,
       totalAmount: amount,
-      status: TransactionStatus.COMPLETED,
+      status: 'completed',
       description: `Dépôt via ${paymentMethod}`,
       reference,
       paymentMethod,
     });
 
+    // Mettre à jour le wallet
+    const wallet = await this.walletModel.findOne({ userId: new Types.ObjectId(userId) });
+    if (wallet) {
+      wallet.balance = user.balance;
+      await wallet.save();
+    }
+
     return { success: true, message: 'Dépôt effectué', newBalance: user.balance, amount };
   }
 
+  /**
+   * Retirer de l'argent
+   */
   async withdraw(userId: string, amount: number, paymentMethod: string) {
     if (amount <= 0) throw new BadRequestException('Montant invalide');
 
@@ -202,37 +255,70 @@ export class WalletService {
     const reference = `WTH-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
     await this.txModel.create({
       senderId: new Types.ObjectId(userId),
-      type: TransactionType.WITHDRAWAL,
+      type: 'withdrawal',
       amount,
       fee: 0,
       totalAmount: amount,
-      status: TransactionStatus.COMPLETED,
+      status: 'completed',
       description: `Retrait via ${paymentMethod}`,
       reference,
       paymentMethod,
     });
 
+    // Mettre à jour le wallet
+    const wallet = await this.walletModel.findOne({ userId: new Types.ObjectId(userId) });
+    if (wallet) {
+      wallet.balance = user.balance;
+      await wallet.save();
+    }
+
     return { success: true, message: 'Retrait effectué', newBalance: user.balance, amount };
   }
 
+  /**
+   * Synchroniser le wallet avec l'utilisateur
+   */
   async syncWallet(userId: string) {
     const user = await this.userModel.findById(userId).select('balance qrCode');
     if (!user) throw new NotFoundException('Utilisateur non trouvé');
 
-    await this.walletModel.findOneAndUpdate(
+    const wallet = await this.walletModel.findOneAndUpdate(
       { userId: new Types.ObjectId(userId) },
-      { balance: user.balance, qrCode: user.qrCode },
+      { 
+        balance: user.balance, 
+        qrCode: user.qrCode,
+        updatedAt: new Date()
+      },
       { upsert: true, new: true },
     );
 
-    return { success: true, balance: user.balance, message: 'Synchronisation effectuée' };
+    return { 
+      success: true, 
+      balance: user.balance, 
+      wallet: {
+        id: wallet._id.toString(),
+        dailyLimit: wallet.dailyLimit,
+        monthlyLimit: wallet.monthlyLimit,
+        todaySpent: wallet.todaySpent || 0,
+        monthSpent: wallet.monthSpent || 0,
+      },
+      message: 'Synchronisation effectuée' 
+    };
   }
 
+  /**
+   * Calcule les statistiques du wallet
+   */
   private async computeStats(userId: string, wallet: WalletDocument) {
     const uid = new Types.ObjectId(userId);
 
     const txAgg = await this.txModel.aggregate([
-      { $match: { $or: [{ senderId: uid }, { receiverId: uid }], status: 'completed' } },
+      { 
+        $match: { 
+          $or: [{ senderId: uid }, { receiverId: uid }], 
+          status: 'completed' 
+        } 
+      },
       {
         $group: {
           _id: null,
@@ -268,11 +354,30 @@ export class WalletService {
       totalTransactions: agg.count,
       totalFees: agg.totalFees,
       pendingBalance: 0,
-      todaySpent: wallet.todaySpent,
-      monthSpent: wallet.monthSpent,
-      remainingDailyLimit: wallet.dailyLimit - wallet.todaySpent,
-      remainingMonthlyLimit: wallet.monthlyLimit - wallet.monthSpent,
-      recentTransactions,
+      todaySpent: wallet.todaySpent || 0,
+      monthSpent: wallet.monthSpent || 0,
+      remainingDailyLimit: wallet.dailyLimit - (wallet.todaySpent || 0),
+      remainingMonthlyLimit: wallet.monthlyLimit - (wallet.monthSpent || 0),
+      recentTransactions: recentTransactions.map((t) => ({
+        id: t._id.toString(),
+        type: t.type,
+        amount: t.amount,
+        status: t.status,
+        description: t.description,
+        createdAt: t.createdAt,
+        sender: t.senderId ? {
+          id: (t.senderId as any)._id.toString(),
+          firstName: (t.senderId as any).firstName,
+          lastName: (t.senderId as any).lastName,
+          email: (t.senderId as any).email,
+        } : null,
+        receiver: t.receiverId ? {
+          id: (t.receiverId as any)._id.toString(),
+          firstName: (t.receiverId as any).firstName,
+          lastName: (t.receiverId as any).lastName,
+          email: (t.receiverId as any).email,
+        } : null,
+      })),
     };
   }
 }

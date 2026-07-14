@@ -1,3 +1,4 @@
+// src/transactions/transactions.service.ts
 import {
   Injectable,
   NotFoundException,
@@ -9,8 +10,6 @@ import * as crypto from 'crypto';
 import {
   Transaction,
   TransactionDocument,
-  TransactionType,
-  TransactionStatus,
 } from './schemas/transaction.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { SendMoneyDto } from './dto/send-money.dto';
@@ -50,11 +49,11 @@ export class TransactionsService {
     const tx = new this.txModel({
       senderId: new Types.ObjectId(userId),
       receiverId: new Types.ObjectId(dto.receiverId),
-      type: TransactionType.TRANSFER,
+      type: 'transfer',
       amount: dto.amount,
       fee: 0,
       totalAmount: dto.amount,
-      status: TransactionStatus.COMPLETED,
+      status: 'completed',
       description:
         dto.description || `Transfert vers ${receiver.firstName} ${receiver.lastName}`,
       reference,
@@ -102,11 +101,11 @@ export class TransactionsService {
 
     const tx = new this.txModel({
       senderId: new Types.ObjectId(userId),
-      type: TransactionType.MOBILE_MONEY,
+      type: 'mobile_money',
       amount,
       fee,
       totalAmount,
-      status: TransactionStatus.COMPLETED,
+      status: 'completed',
       description: `Transfert Mobile Money ${operator.toUpperCase()} → ${cleanPhoneNumber}`,
       reference,
       mobileMoneyOperator: operator,
@@ -158,11 +157,11 @@ export class TransactionsService {
     const tx = new this.txModel({
       senderId: new Types.ObjectId(userId),
       receiverId: receiver._id,
-      type: TransactionType.PAYMENT,
+      type: 'payment',
       amount,
       fee: 0,
       totalAmount: amount,
-      status: TransactionStatus.COMPLETED,
+      status: 'completed',
       description: description || `Paiement QR à ${receiver.firstName} ${receiver.lastName}`,
       reference,
       paymentMethod: 'wallet',
@@ -191,7 +190,7 @@ export class TransactionsService {
     const allTx = await this.txModel
       .find({
         $or: [{ senderId: uid }, { receiverId: uid }],
-        status: TransactionStatus.COMPLETED,
+        status: 'completed',
       })
       .populate('senderId', 'firstName lastName email')
       .populate('receiverId', 'firstName lastName email')
@@ -202,7 +201,7 @@ export class TransactionsService {
       this.toTransactionResponse(t, userId),
     );
 
-    const lastDeposit = allTx.find((t) => t.type === TransactionType.DEPOSIT);
+    const lastDeposit = allTx.find((t) => t.type === 'deposit');
     const largestTransaction = [...allTx].sort((a, b) => b.amount - a.amount)[0];
 
     const monthlyStats = this.buildMonthlyStats(allTx, userId);
@@ -281,13 +280,13 @@ export class TransactionsService {
       );
 
       const sent = inMonth
-        .filter((t) => t.senderId?.toString() === uid && t.type !== TransactionType.DEPOSIT)
+        .filter((t) => t.senderId?.toString() === uid && t.type !== 'deposit')
         .reduce((s, t) => s + t.amount, 0);
 
       const received = inMonth
         .filter(
           (t) =>
-            t.receiverId?.toString() === uid || t.type === TransactionType.DEPOSIT,
+            t.receiverId?.toString() === uid || t.type === 'deposit',
         )
         .reduce((s, t) => s + t.amount, 0);
 

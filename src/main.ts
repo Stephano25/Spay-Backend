@@ -1,15 +1,17 @@
-// src/main.ts
+// backend/src/main.ts
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import { join } from 'path';
+import * as fs from 'fs';
 
-// ✅ Utiliser require pour les modules CommonJS
 const session = require('express-session');
 const passport = require('passport');
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
   
-  // ✅ Configuration des sessions
+  // Configuration des sessions
   app.use(
     session({
       secret: process.env.SESSION_SECRET || 'mon-super-secret-par-defaut',
@@ -17,16 +19,15 @@ async function bootstrap() {
       saveUninitialized: false,
       cookie: {
         secure: process.env.NODE_ENV === 'production',
-        maxAge: 24 * 60 * 60 * 1000, // 24 heures
+        maxAge: 24 * 60 * 60 * 1000,
       },
     })
   );
   
-  // ✅ Initialisation de Passport
   app.use(passport.initialize());
   app.use(passport.session());
   
-  // ✅ Configuration CORS
+  // Configuration CORS
   const corsOrigin = process.env.CORS_ORIGIN 
     ? process.env.CORS_ORIGIN.split(',') 
     : [
@@ -36,14 +37,7 @@ async function bootstrap() {
         'http://localhost:19000',
         'http://localhost:19001',
         'http://localhost:19002',
-        'exp://localhost:19000',
-        'exp://localhost:19001',
-        'exp://localhost:19002',
         'http://localhost',
-        'http://192.168.188.135:8081',
-        'http://192.168.188.135:19000',
-        'http://192.168.188.135:19001',
-        'http://192.168.188.135:19002',
       ];
     
   app.enableCors({
@@ -60,6 +54,21 @@ async function bootstrap() {
     exposedHeaders: ['Content-Length', 'X-Foo', 'X-Bar'],
     maxAge: 86400,
   });
+  
+  // ✅ SERVIR LES FICHIERS STATIQUES - CORRECTION
+  const uploadsDir = join(process.cwd(), 'uploads');
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+    console.log(`📁 Dossier uploads créé: ${uploadsDir}`);
+  }
+  
+  // ✅ Servir les fichiers du dossier uploads avec le bon préfixe
+  app.useStaticAssets(uploadsDir, {
+    prefix: '/uploads/',
+  });
+  
+  console.log(`📁 Dossier uploads: ${uploadsDir}`);
+  console.log(`📁 Dossier courant: ${process.cwd()}`);
   
   app.setGlobalPrefix('api');
   

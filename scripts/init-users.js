@@ -1,13 +1,13 @@
-// scripts/init-users.js
+// backend/scripts/init-users.js
 // Script pour initialiser les utilisateurs par défaut
-// Exécuter avec: npm run init-users
+// Exécuter avec: docker-compose exec backend node scripts/init-users.js
 
 const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 
-// Configuration
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://spaye_user:spaye2024@mongodb:27017/spaye?authSource=spaye';
+// Configuration - Utiliser l'URI de connexion de Docker
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://admin:password123@mongodb:27017/spaye?authSource=admin';
 
 // Définition du schéma User (simplifié pour l'init)
 const userSchema = new mongoose.Schema({
@@ -88,38 +88,7 @@ async function generateUniqueQrCode() {
       return candidate;
     }
   }
-  // Fallback avec plus d'entropie
   return `SPAYE-${crypto.randomBytes(16).toString('hex').toUpperCase()}`;
-}
-
-/**
- * Formate le nombre avec séparateurs
- */
-function formatNumber(num) {
-  return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-}
-
-/**
- * Affiche le résumé final
- */
-function printSummary(stats) {
-  console.log('\n' + '='.repeat(60));
-  console.log('✅ INITIALISATION TERMINÉE');
-  console.log('='.repeat(60));
-  console.log(`📊 ${stats.created} créé(s), ${stats.updated} mis à jour, ${stats.skipped} ignoré(s)`);
-  console.log(`📝 Total utilisateurs: ${stats.total}`);
-  console.log('');
-  console.log('📋 COMPTES DISPONIBLES:');
-  console.log('='.repeat(60));
-  console.log('🔑 SUPER ADMIN: superadmin@spaye.com / superadmin@2026');
-  console.log('🔑 ADMIN: admin@spaye.com / admin@2026');
-  console.log('👤 USER: user@spaye.com / user@2026');
-  console.log('👤 TEST: test@gmail.com / Test@123');
-  console.log('='.repeat(60));
-  console.log('💡 Pour vous connecter:');
-  console.log('   POST /api/auth/login');
-  console.log('   { "email": "admin@spaye.com", "password": "admin@2026" }');
-  console.log('='.repeat(60));
 }
 
 /**
@@ -139,11 +108,6 @@ async function initUsers() {
 
     console.log('✅ Connecté à MongoDB\n');
 
-    // Vérifier la connexion
-    const db = mongoose.connection.db;
-    const collections = await db.listCollections().toArray();
-    console.log(`📚 Collections disponibles: ${collections.map(c => c.name).join(', ')}\n`);
-
     let stats = { created: 0, updated: 0, skipped: 0, total: 0 };
 
     // Traiter chaque utilisateur
@@ -155,45 +119,8 @@ async function initUsers() {
         let existing = await User.findOne({ email: userData.email });
 
         if (existing) {
-          // Mettre à jour les informations si nécessaire
-          let needsUpdate = false;
-          const updates = {};
-
-          // Vérifier les champs à mettre à jour
-          if (existing.role !== userData.role) {
-            updates.role = userData.role;
-            needsUpdate = true;
-          }
-          if (existing.firstName !== userData.firstName) {
-            updates.firstName = userData.firstName;
-            needsUpdate = true;
-          }
-          if (existing.lastName !== userData.lastName) {
-            updates.lastName = userData.lastName;
-            needsUpdate = true;
-          }
-          if (existing.phoneNumber !== userData.phoneNumber) {
-            updates.phoneNumber = userData.phoneNumber;
-            needsUpdate = true;
-          }
-          if (existing.language !== (userData.language || 'fr')) {
-            updates.language = userData.language || 'fr';
-            needsUpdate = true;
-          }
-          if (existing.bio !== (userData.bio || '')) {
-            updates.bio = userData.bio || '';
-            needsUpdate = true;
-          }
-
-          if (needsUpdate) {
-            updates.updatedAt = new Date();
-            await User.updateOne({ email: userData.email }, { $set: updates });
-            console.log(`   ✅ Mis à jour: ${Object.keys(updates).join(', ')}`);
-            stats.updated++;
-          } else {
-            console.log(`   ⚠️ Existe déjà (${existing.role}) - Aucune mise à jour nécessaire`);
-            stats.skipped++;
-          }
+          console.log(`   ⚠️ Existe déjà (${existing.role})`);
+          stats.skipped++;
           stats.total++;
           continue;
         }
@@ -209,7 +136,7 @@ async function initUsers() {
           lastName: userData.lastName,
           phoneNumber: userData.phoneNumber,
           qrCode,
-          balance: 0,
+          balance: 1000000,
           role: userData.role,
           isActive: true,
           isGoogleUser: false,
@@ -236,27 +163,37 @@ async function initUsers() {
     }
 
     // Afficher le résumé
-    printSummary(stats);
+    console.log('\n' + '='.repeat(60));
+    console.log('✅ INITIALISATION TERMINÉE');
+    console.log('='.repeat(60));
+    console.log(`📊 ${stats.created} créé(s), ${stats.updated} mis à jour, ${stats.skipped} ignoré(s)`);
+    console.log(`📝 Total utilisateurs: ${stats.total}`);
+    console.log('');
+    console.log('📋 COMPTES DISPONIBLES:');
+    console.log('='.repeat(60));
+    console.log('🔑 SUPER ADMIN: superadmin@spaye.com / superadmin@2026');
+    console.log('🔑 ADMIN: admin@spaye.com / admin@2026');
+    console.log('👤 USER: user@spaye.com / user@2026');
+    console.log('👤 TEST: test@gmail.com / Test@123');
+    console.log('='.repeat(60));
+    console.log('💡 Pour vous connecter:');
+    console.log('   POST /api/auth/login');
+    console.log('   { "email": "admin@spaye.com", "password": "admin@2026" }');
+    console.log('='.repeat(60));
 
-    // Déconnexion
     await mongoose.disconnect();
     console.log('\n🔌 Déconnecté de MongoDB');
     process.exit(0);
 
   } catch (error) {
     console.error('❌ Erreur fatale:', error.message);
-    if (error.code) {
-      console.error(`   Code: ${error.code}`);
-    }
     process.exit(1);
   }
 }
 
-// Gestion des erreurs non capturées
 process.on('unhandledRejection', (error) => {
   console.error('❌ Erreur non gérée:', error);
   process.exit(1);
 });
 
-// Exécuter le script
 initUsers();

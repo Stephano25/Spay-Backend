@@ -1,3 +1,4 @@
+// src/wallet/wallet.module.ts
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { WalletController } from './wallet.controller';

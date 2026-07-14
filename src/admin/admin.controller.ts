@@ -1,233 +1,278 @@
+// src/admin/admin.controller.ts
 import {
   Controller,
   Get,
-  UseGuards,
-  Patch,
-  Param,
-  Body,
-  Delete,
   Post,
-  HttpCode,
-  HttpStatus,
-  Req,
+  Put,
+  Delete,
+  Body,
+  Param,
+  UseGuards,
+  Request,
+  Query,
   BadRequestException,
-  Logger,
+  NotFoundException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { AdminService } from './admin.service';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { UserRole } from '../users/schemas/user.schema';
 
 @Controller('admin')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('admin', 'super_admin')
+@UseGuards(AuthGuard('jwt'), RolesGuard)
 export class AdminController {
-  private readonly logger = new Logger(AdminController.name);
-
   constructor(private readonly adminService: AdminService) {}
 
+  // ============================================================
+  // TABLEAU DE BORD ADMIN
+  // ============================================================
+
   @Get('dashboard/stats')
-  async getDashboardStats(@Req() req: any) {
-    try {
-      const userId = req.user.userId;
-      const userRole = req.user.role;
-      this.logger.log(`📊 Récupération des stats pour ${userRole} (${userId})`);
-      const stats = await this.adminService.getDashboardStats(userId, userRole);
-      return stats;
-    } catch (error) {
-      this.logger.error('❌ Erreur dashboard stats:', error);
-      return {
-        totalUsers: 0,
-        activeUsers: 0,
-        totalTransactions: 0,
-        totalVolume: 0,
-        recentUsers: [],
-        recentTransactions: [],
-        dailyStats: [],
-        topUsers: [],
-        totalAdmins: 0,
-        totalSuperAdmins: 0,
-      };
-    }
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async getDashboardStats(@Request() req) {
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    return this.adminService.getDashboardStats(userId, userRole);
   }
 
-  // ✅ NOUVEAU : Endpoint pour les commissions
-  @Get('dashboard/commissions')
-  async getCommissionStats(@Req() req: any) {
-    try {
-      const userId = req.user.userId;
-      const userRole = req.user.role;
-      this.logger.log(`💰 Récupération des commissions pour ${userRole} (${userId})`);
-      const commissions = await this.adminService.getCommissionStats(userId, userRole);
-      return commissions;
-    } catch (error) {
-      this.logger.error('❌ Erreur commissions:', error);
-      return {
-        totalCommission: 0,
-        commissionTransactions: 0,
-        commissionRate: 0.5,
-        recentCommissions: [],
-        myCommission: 0,
-        myCommissionTransactions: 0,
-      };
-    }
+  @Get('dashboard/recent-transactions')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async getRecentTransactions(@Query('limit') limit: number = 10) {
+    return this.adminService.getRecentTransactions(limit);
   }
+
+  @Get('dashboard/recent-users')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async getRecentUsers(@Query('limit') limit: number = 10) {
+    return this.adminService.getRecentUsers(limit);
+  }
+
+  // ============================================================
+  // GESTION DES UTILISATEURS
+  // ============================================================
 
   @Get('users')
-  async getAllUsers() {
-    return this.adminService.getAllUsers();
-  }
-
-  @Get('users/:userId')
-  async getUserById(@Param('userId') userId: string) {
-    return this.adminService.getUserById(userId);
-  }
-
-  @Patch('users/:userId/status')
-  async updateUserStatus(
-    @Param('userId') userId: string,
-    @Body('isActive') isActive: boolean,
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async getAllUsers(
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 20,
+    @Query('search') search?: string,
   ) {
-    return this.adminService.updateUserStatus(userId, isActive);
+    return this.adminService.getAllUsers(page, limit, search);
   }
 
-  @Patch('users/:userId/role')
-  async updateUserRole(
-    @Param('userId') userId: string,
-    @Body('role') role: string,
+  @Get('users/:id')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async getUserById(@Param('id') id: string) {
+    return this.adminService.getUserById(id);
+  }
+
+  @Put('users/:id')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async updateUser(@Param('id') id: string, @Body() updateData: any) {
+    return this.adminService.updateUser(id, updateData);
+  }
+
+  @Delete('users/:id')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async deleteUser(@Param('id') id: string) {
+    return this.adminService.deleteUser(id);
+  }
+
+  @Post('users/:id/activate')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async activateUser(@Param('id') id: string) {
+    return this.adminService.activateUser(id);
+  }
+
+  @Post('users/:id/deactivate')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async deactivateUser(@Param('id') id: string) {
+    return this.adminService.deactivateUser(id);
+  }
+
+  @Post('users/:id/role')
+  @Roles(UserRole.SUPER_ADMIN)
+  async updateUserRole(@Param('id') id: string, @Body('role') role: UserRole) {
+    return this.adminService.updateUserRole(id, role);
+  }
+
+  @Post('users/:id/balance')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async updateUserBalance(
+    @Param('id') id: string,
+    @Body('amount') amount: number,
+    @Body('operation') operation: 'add' | 'subtract' | 'set',
   ) {
-    return this.adminService.updateUserRole(userId, role);
+    return this.adminService.updateUserBalance(id, amount, operation);
   }
 
-  @Delete('users/:userId')
-  async deleteUser(@Param('userId') userId: string) {
-    return this.adminService.deleteUser(userId);
+  // ============================================================
+  // GESTION DES TRANSACTIONS
+  // ============================================================
+
+  @Get('transactions')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async getAllTransactions(
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 20,
+    @Query('userId') userId?: string,
+    @Query('type') type?: string,
+    @Query('status') status?: string,
+  ) {
+    return this.adminService.getAllTransactions(page, limit, userId, type, status);
   }
 
-  @Post('users/:userId/deposit')
+  @Get('transactions/:id')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async getTransactionById(@Param('id') id: string) {
+    return this.adminService.getTransactionById(id);
+  }
+
+  @Post('transactions/:id/status')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async updateTransactionStatus(
+    @Param('id') id: string,
+    @Body('status') status: string,
+    @Body('reason') reason?: string,
+  ) {
+    return this.adminService.updateTransactionStatus(id, status, reason);
+  }
+
+  // ============================================================
+  // GESTION DES VERSEMENTS (DÉPÔTS/RETRAITS ADMIN)
+  // ============================================================
+
+  @Post('deposit')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async depositMoney(
-    @Req() req: any,
-    @Param('userId') userId: string,
+    @Body('userId') userId: string,
     @Body('amount') amount: number,
-    @Body('description') description?: string,
-    @Body('qrCode') qrCode?: string,
+    @Body('description') description: string,
+    @Request() req,
   ) {
-    if (!userId) {
-      throw new BadRequestException('ID utilisateur requis');
-    }
-    if (!amount || amount <= 0) {
-      throw new BadRequestException('Montant invalide');
-    }
-    const adminId = req.user.userId;
-    return this.adminService.depositMoney(adminId, userId, amount, description, qrCode);
+    const adminId = req.user.id;
+    return this.adminService.depositMoney(adminId, userId, amount, description);
   }
 
-  @Post('users/:userId/withdraw')
+  @Post('withdraw')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async withdrawMoney(
-    @Req() req: any,
-    @Param('userId') userId: string,
+    @Body('userId') userId: string,
     @Body('amount') amount: number,
-    @Body('description') description?: string,
-    @Body('qrCode') qrCode?: string,
+    @Body('description') description: string,
+    @Request() req,
   ) {
-    if (!userId) {
-      throw new BadRequestException('ID utilisateur requis');
-    }
-    if (!amount || amount <= 0) {
-      throw new BadRequestException('Montant invalide');
-    }
-    const adminId = req.user.userId;
-    return this.adminService.withdrawMoney(adminId, userId, amount, description, qrCode);
+    const adminId = req.user.id;
+    return this.adminService.withdrawMoney(adminId, userId, amount, description);
   }
 
-  @Post('generate-qr')
-  async generateQRCode(
-    @Req() req: any,
-    @Body('type') type: 'deposit' | 'withdraw',
-    @Body('amount') amount?: number,
+  // ============================================================
+  // STATISTIQUES AVANCÉES
+  // ============================================================
+
+  @Get('stats/revenue')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async getRevenueStats(
+    @Query('period') period: 'day' | 'week' | 'month' | 'year' = 'month',
   ) {
-    const adminId = req.user.userId;
-    return this.adminService.generateQRCode(adminId, type, amount);
+    return this.adminService.getRevenueStats(period);
   }
 
-  @Post('scan-qr')
-  async scanQRCode(@Req() req: any, @Body('qrData') qrData: string) {
-    const adminId = req.user.userId;
-    return this.adminService.scanQRCode(adminId, qrData);
+  @Get('stats/users-growth')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async getUserGrowthStats(
+    @Query('period') period: 'day' | 'week' | 'month' | 'year' = 'month',
+  ) {
+    return this.adminService.getUserGrowthStats(period);
   }
 
-  @Post('admins')
-  @Roles('super_admin')
-  async createAdmin(
-    @Body()
-    adminData: {
-      email: string;
-      password: string;
-      firstName: string;
-      lastName: string;
-      phoneNumber?: string;
-      role?: 'admin' | 'super_admin';
-    },
+  @Get('stats/transactions-volume')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async getTransactionVolumeStats(
+    @Query('period') period: 'day' | 'week' | 'month' | 'year' = 'month',
   ) {
-    return this.adminService.createAdmin(adminData);
+    return this.adminService.getTransactionVolumeStats(period);
   }
+
+  // ============================================================
+  // GESTION DES ADMINISTRATEURS (SUPER ADMIN UNIQUEMENT)
+  // ============================================================
 
   @Get('admins')
-  @Roles('super_admin')
+  @Roles(UserRole.SUPER_ADMIN)
   async getAdmins() {
     return this.adminService.getAdmins();
   }
 
-  @Delete('admins/:adminId')
-  @Roles('super_admin')
-  async deleteAdmin(@Param('adminId') adminId: string, @Req() req: any) {
-    const currentAdminId = req.user.userId;
-    return this.adminService.deleteAdmin(adminId, currentAdminId);
+  @Post('admins')
+  @Roles(UserRole.SUPER_ADMIN)
+  async createAdmin(
+    @Body('email') email: string,
+    @Body('password') password: string,
+    @Body('firstName') firstName: string,
+    @Body('lastName') lastName: string,
+    @Body('role') role: UserRole,
+  ) {
+    if (role !== UserRole.ADMIN && role !== UserRole.SUPER_ADMIN) {
+      throw new BadRequestException('Rôle invalide pour un administrateur');
+    }
+    return this.adminService.createAdmin({ email, password, firstName, lastName, role });
   }
 
-  @Get('transactions')
-  async getAllTransactions() {
-    return this.adminService.getAllTransactions();
+  @Delete('admins/:id')
+  @Roles(UserRole.SUPER_ADMIN)
+  async removeAdmin(@Param('id') id: string, @Request() req) {
+    const currentUserId = req.user.id;
+    if (id === currentUserId) {
+      throw new BadRequestException('Vous ne pouvez pas vous supprimer vous-même');
+    }
+    return this.adminService.deleteAdmin(id, currentUserId);
   }
 
-  @Get('transactions/:transactionId')
-  async getTransactionById(@Param('transactionId') transactionId: string) {
-    return this.adminService.getTransactionById(transactionId);
-  }
+  // ============================================================
+  // GESTION DES PARAMÈTRES SYSTÈME (SUPER ADMIN UNIQUEMENT)
+  // ============================================================
 
   @Get('settings')
+  @Roles(UserRole.SUPER_ADMIN)
   async getSettings() {
     return this.adminService.getSettings();
   }
 
-  @Patch('settings')
+  @Put('settings')
+  @Roles(UserRole.SUPER_ADMIN)
   async updateSettings(@Body() settings: any) {
     return this.adminService.updateSettings(settings);
   }
 
-  @Get('system/logs')
-  async getSystemLogs() {
-    return this.adminService.getSystemLogs();
-  }
-
-  @Get('system/stats')
+  @Get('system-stats')
+  @Roles(UserRole.SUPER_ADMIN)
   async getSystemStats() {
     return this.adminService.getSystemStats();
   }
 
-  @Post('system/clear-cache')
-  @HttpCode(HttpStatus.OK)
-  async clearCache() {
-    return this.adminService.clearCache();
+  // ============================================================
+  // GESTION DES LOGS (SUPER ADMIN UNIQUEMENT)
+  // ============================================================
+
+  @Get('logs')
+  @Roles(UserRole.SUPER_ADMIN)
+  async getSystemLogs(
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 50,
+    @Query('type') type?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.adminService.getSystemLogs();
   }
 
-  @Get('profile')
-  async getAdminProfile(@Req() req: any) {
-    return this.adminService.getAdminProfile(req.user.userId);
-  }
-
-  @Patch('profile')
-  async updateAdminProfile(@Req() req: any, @Body() updateData: any) {
-    return this.adminService.updateAdminProfile(req.user.userId, updateData);
+  @Delete('logs')
+  @Roles(UserRole.SUPER_ADMIN)
+  async clearLogs(@Query('olderThan') olderThan?: string) {
+    return this.adminService.clearLogs(olderThan);
   }
 }

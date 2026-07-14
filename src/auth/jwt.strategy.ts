@@ -1,38 +1,28 @@
+// src/auth/strategies/jwt.strategy.ts
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { User, UserDocument } from '../users/schemas/user.schema';
+import { UsersService } from '../users/users.service';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     private configService: ConfigService,
-    @InjectModel(User.name) private userModel: Model<UserDocument>,
+    private usersService: UsersService,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: configService.get<string>('JWT_SECRET'),
+      secretOrKey: configService.get('JWT_SECRET') || 'secret-key',
     });
   }
 
   async validate(payload: any) {
-    const user = await this.userModel.findById(payload.sub).select('-password');
+    const user = await this.usersService.findById(payload.sub);
     if (!user) {
       throw new UnauthorizedException('Utilisateur non trouvé');
     }
-    if (!user.isActive) {
-      throw new UnauthorizedException('Compte désactivé');
-    }
-    return {
-      userId: user._id,
-      email: user.email,
-      role: user.role,
-      firstName: user.firstName,
-      lastName: user.lastName,
-    };
+    return { id: payload.sub, email: payload.email, role: user.role };
   }
 }

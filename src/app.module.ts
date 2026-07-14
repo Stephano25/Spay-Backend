@@ -12,7 +12,7 @@ import { ChatModule } from './chat/chat.module';
 import { ConversationsModule } from './conversations/conversations.module';
 import { SettingsModule } from './settings/settings.module';
 import { LogsModule } from './logs/logs.module';
-import { I18nModule } from './i18n/i18n.module'; // ✅ AJOUT
+import { I18nModule } from './i18n/i18n.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { HealthController } from './health.controller';
@@ -31,7 +31,7 @@ import { HealthController } from './health.controller';
       }),
       inject: [ConfigService],
     }),
-    I18nModule, // ✅ AJOUT
+    I18nModule,
     AuthModule,
     UsersModule,
     TransactionsModule,
