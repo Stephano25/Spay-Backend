@@ -37,6 +37,14 @@ export class AdminController {
     return this.adminService.getDashboardStats(userId, userRole);
   }
 
+  @Get('dashboard/commissions')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async getCommissionStats(@Request() req) {
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    return this.adminService.getCommissionStats(userId, userRole);
+  }
+
   @Get('dashboard/recent-transactions')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async getRecentTransactions(@Query('limit') limit: number = 10) {
@@ -47,6 +55,31 @@ export class AdminController {
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async getRecentUsers(@Query('limit') limit: number = 10) {
     return this.adminService.getRecentUsers(limit);
+  }
+
+  // ============================================================
+  // QR CODE
+  // ============================================================
+
+  @Post('generate-qr')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async generateQRCode(
+    @Request() req,
+    @Body('type') type: 'deposit' | 'withdraw',
+    @Body('amount') amount?: number,
+  ) {
+    const adminId = req.user.id;
+    return this.adminService.generateQRCode(adminId, type, amount);
+  }
+
+  @Post('scan-qr')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  async scanQRCode(
+    @Request() req,
+    @Body('qrData') qrData: string,
+  ) {
+    const adminId = req.user.id;
+    return this.adminService.scanQRCode(adminId, qrData);
   }
 
   // ============================================================
@@ -145,28 +178,30 @@ export class AdminController {
   // GESTION DES VERSEMENTS (DÉPÔTS/RETRAITS ADMIN)
   // ============================================================
 
-  @Post('deposit')
+  @Post('users/:userId/deposit')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async depositMoney(
-    @Body('userId') userId: string,
+    @Param('userId') userId: string,
     @Body('amount') amount: number,
     @Body('description') description: string,
     @Request() req,
+    @Body('qrCode') qrCode?: string,
   ) {
     const adminId = req.user.id;
-    return this.adminService.depositMoney(adminId, userId, amount, description);
+    return this.adminService.depositMoney(adminId, userId, amount, description, qrCode);
   }
 
-  @Post('withdraw')
+  @Post('users/:userId/withdraw')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async withdrawMoney(
-    @Body('userId') userId: string,
+    @Param('userId') userId: string,
     @Body('amount') amount: number,
     @Body('description') description: string,
     @Request() req,
+    @Body('qrCode') qrCode?: string,
   ) {
     const adminId = req.user.id;
-    return this.adminService.withdrawMoney(adminId, userId, amount, description);
+    return this.adminService.withdrawMoney(adminId, userId, amount, description, qrCode);
   }
 
   // ============================================================

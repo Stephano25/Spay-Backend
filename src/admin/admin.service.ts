@@ -191,351 +191,11 @@ export class AdminService {
   }
 
   // ============================================================
-  // MÉTHODES MANQUANTES AJOUTÉES
-  // ============================================================
-
-  // ✅ getRecentTransactions
-  async getRecentTransactions(limit: number = 10): Promise<any[]> {
-    return this.transactionModel
-      .find()
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .populate('senderId', 'firstName lastName email')
-      .populate('receiverId', 'firstName lastName email')
-      .exec();
-  }
-
-  // ✅ getRecentUsers
-  async getRecentUsers(limit: number = 10): Promise<any[]> {
-    return this.userModel
-      .find()
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .select('-password')
-      .exec();
-  }
-
-  // ✅ getAllUsers avec pagination
-  async getAllUsers(page: number = 1, limit: number = 20, search?: string): Promise<any> {
-    const skip = (page - 1) * limit;
-    const query: any = {};
-    
-    if (search) {
-      query.$or = [
-        { firstName: { $regex: search, $options: 'i' } },
-        { lastName: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
-      ];
-    }
-
-    const [users, total] = await Promise.all([
-      this.userModel
-        .find(query)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .select('-password')
-        .exec(),
-      this.userModel.countDocuments(query),
-    ]);
-
-    return {
-      data: users.map((u) => this.toUserResponse(u)),
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
-    };
-  }
-
-  // ✅ updateUser
-  async updateUser(id: string, updateData: any): Promise<any> {
-    if (!Types.ObjectId.isValid(id)) {
-      throw new NotFoundException('ID utilisateur invalide');
-    }
-    const user = await this.userModel
-      .findByIdAndUpdate(id, updateData, { new: true })
-      .select('-password');
-    if (!user) {
-      throw new NotFoundException('Utilisateur non trouvé');
-    }
-    return this.toUserResponse(user);
-  }
-
-  // ✅ activateUser
-  async activateUser(id: string): Promise<any> {
-    return this.updateUserStatus(id, true);
-  }
-
-  // ✅ deactivateUser
-  async deactivateUser(id: string): Promise<any> {
-    return this.updateUserStatus(id, false);
-  }
-
-  // ✅ updateUserBalance
-  async updateUserBalance(id: string, amount: number, operation: 'add' | 'subtract' | 'set'): Promise<any> {
-    if (!Types.ObjectId.isValid(id)) {
-      throw new NotFoundException('ID utilisateur invalide');
-    }
-
-    const user = await this.userModel.findById(id);
-    if (!user) {
-      throw new NotFoundException('Utilisateur non trouvé');
-    }
-
-    switch (operation) {
-      case 'add':
-        user.balance += amount;
-        break;
-      case 'subtract':
-        if (user.balance < amount) {
-          throw new BadRequestException('Solde insuffisant');
-        }
-        user.balance -= amount;
-        break;
-      case 'set':
-        if (amount < 0) {
-          throw new BadRequestException('Le solde ne peut pas être négatif');
-        }
-        user.balance = amount;
-        break;
-    }
-
-    await user.save();
-    return { success: true, balance: user.balance };
-  }
-
-  // ✅ getAllTransactions avec pagination et filtres
-  async getAllTransactions(
-    page: number = 1,
-    limit: number = 20,
-    userId?: string,
-    type?: string,
-    status?: string,
-  ): Promise<any> {
-    const skip = (page - 1) * limit;
-    const query: any = {};
-    
-    if (userId) {
-      query.$or = [
-        { senderId: new Types.ObjectId(userId) },
-        { receiverId: new Types.ObjectId(userId) },
-      ];
-    }
-    if (type) query.type = type;
-    if (status) query.status = status;
-
-    const [transactions, total] = await Promise.all([
-      this.transactionModel
-        .find(query)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .populate('senderId', 'firstName lastName email')
-        .populate('receiverId', 'firstName lastName email')
-        .exec(),
-      this.transactionModel.countDocuments(query),
-    ]);
-
-    return {
-      data: transactions,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
-    };
-  }
-
-  // ✅ updateTransactionStatus
-  async updateTransactionStatus(id: string, status: string, reason?: string): Promise<any> {
-    if (!Types.ObjectId.isValid(id)) {
-      throw new NotFoundException('ID transaction invalide');
-    }
-
-    const transaction = await this.transactionModel.findById(id);
-    if (!transaction) {
-      throw new NotFoundException('Transaction non trouvée');
-    }
-    
-    const validStatuses = ['pending', 'completed', 'failed', 'cancelled'];
-    if (!validStatuses.includes(status)) {
-      throw new BadRequestException(`Statut invalide: ${status}`);
-    }
-    
-    transaction.status = status as TransactionStatus;
-    if (reason) {
-      (transaction as any).rejectionReason = reason;
-    }
-    await transaction.save();
-
-    return transaction;
-  }
-
-  // ✅ getRevenueStats
-  async getRevenueStats(period: 'day' | 'week' | 'month' | 'year' = 'month'): Promise<any> {
-    const now = new Date();
-    let startDate: Date;
-
-    switch (period) {
-      case 'day':
-        startDate = new Date(now.setDate(now.getDate() - 1));
-        break;
-      case 'week':
-        startDate = new Date(now.setDate(now.getDate() - 7));
-        break;
-      case 'month':
-        startDate = new Date(now.setMonth(now.getMonth() - 1));
-        break;
-      case 'year':
-        startDate = new Date(now.setFullYear(now.getFullYear() - 1));
-        break;
-      default:
-        startDate = new Date(now.setMonth(now.getMonth() - 1));
-    }
-
-    const revenue = await this.transactionModel.aggregate([
-      {
-        $match: {
-          status: TransactionStatus.COMPLETED,
-          createdAt: { $gte: startDate },
-        },
-      },
-      {
-        $group: {
-          _id: {
-            $dateToString: { format: '%Y-%m-%d', date: '$createdAt' },
-          },
-          total: { $sum: '$amount' },
-          count: { $sum: 1 },
-        },
-      },
-      { $sort: { _id: 1 } },
-    ]);
-
-    return {
-      period,
-      data: revenue,
-      total: revenue.reduce((sum, item) => sum + item.total, 0),
-    };
-  }
-
-  // ✅ getUserGrowthStats
-  async getUserGrowthStats(period: 'day' | 'week' | 'month' | 'year' = 'month'): Promise<any> {
-    const now = new Date();
-    let startDate: Date;
-
-    switch (period) {
-      case 'day':
-        startDate = new Date(now.setDate(now.getDate() - 1));
-        break;
-      case 'week':
-        startDate = new Date(now.setDate(now.getDate() - 7));
-        break;
-      case 'month':
-        startDate = new Date(now.setMonth(now.getMonth() - 1));
-        break;
-      case 'year':
-        startDate = new Date(now.setFullYear(now.getFullYear() - 1));
-        break;
-      default:
-        startDate = new Date(now.setMonth(now.getMonth() - 1));
-    }
-
-    const growth = await this.userModel.aggregate([
-      {
-        $match: {
-          createdAt: { $gte: startDate },
-        },
-      },
-      {
-        $group: {
-          _id: {
-            $dateToString: { format: '%Y-%m-%d', date: '$createdAt' },
-          },
-          count: { $sum: 1 },
-        },
-      },
-      { $sort: { _id: 1 } },
-    ]);
-
-    return {
-      period,
-      data: growth,
-      total: growth.reduce((sum, item) => sum + item.count, 0),
-    };
-  }
-
-  // ✅ getTransactionVolumeStats
-  async getTransactionVolumeStats(period: 'day' | 'week' | 'month' | 'year' = 'month'): Promise<any> {
-    const now = new Date();
-    let startDate: Date;
-
-    switch (period) {
-      case 'day':
-        startDate = new Date(now.setDate(now.getDate() - 1));
-        break;
-      case 'week':
-        startDate = new Date(now.setDate(now.getDate() - 7));
-        break;
-      case 'month':
-        startDate = new Date(now.setMonth(now.getMonth() - 1));
-        break;
-      case 'year':
-        startDate = new Date(now.setFullYear(now.getFullYear() - 1));
-        break;
-      default:
-        startDate = new Date(now.setMonth(now.getMonth() - 1));
-    }
-
-    const volume = await this.transactionModel.aggregate([
-      {
-        $match: {
-          createdAt: { $gte: startDate },
-        },
-      },
-      {
-        $group: {
-          _id: {
-            $dateToString: { format: '%Y-%m-%d', date: '$createdAt' },
-          },
-          count: { $sum: 1 },
-          totalAmount: { $sum: '$amount' },
-        },
-      },
-      { $sort: { _id: 1 } },
-    ]);
-
-    return {
-      period,
-      data: volume,
-      totalTransactions: volume.reduce((sum, item) => sum + item.count, 0),
-      totalAmount: volume.reduce((sum, item) => sum + item.totalAmount, 0),
-    };
-  }
-
-  // ✅ clearLogs
-  async clearLogs(olderThan?: string): Promise<any> {
-    const query: any = {};
-    if (olderThan) {
-      const date = new Date(olderThan);
-      if (!isNaN(date.getTime())) {
-        query.date = { $lt: date };
-      }
-    }
-    await this.logModel.deleteMany(query);
-    return { success: true, message: 'Logs effacés avec succès' };
-  }
-
-  // ============================================================
-  // STATISTIQUES DES COMMISSIONS AVEC I18N
+  // STATISTIQUES DES COMMISSIONS (UNIQUE MÉTHODE)
   // ============================================================
   async getCommissionStats(userId: string, userRole: string) {
     try {
-      const commissionRate = 0.5;
+      const commissionRate = 0.5; // 0.5%
       let totalCommission = 0;
       let commissionTransactions = 0;
       let recentCommissions = [];
@@ -545,6 +205,7 @@ export class AdminService {
       const isValidId = Types.ObjectId.isValid(userId);
 
       if (userRole === 'super_admin') {
+        // ✅ Pour SuperAdmin: toutes les commissions
         const allAdminTx = await this.transactionModel
           .find({
             status: TransactionStatus.COMPLETED,
@@ -561,7 +222,6 @@ export class AdminService {
         }, 0);
 
         recentCommissions = allAdminTx.slice(0, 5).map((tx: any) => {
-          const userLang = (tx.receiverId as any)?.language || 'fr';
           return {
             id: tx._id.toString(),
             adminName: 'Admin',
@@ -574,7 +234,7 @@ export class AdminService {
             commission: tx.amount * commissionRate / 100,
             createdAt: tx.createdAt,
             type: tx.type,
-            language: userLang,
+            language: (tx.receiverId as any)?.language || 'fr',
           };
         });
 
@@ -593,6 +253,7 @@ export class AdminService {
         }
 
       } else if (userRole === 'admin' && isValidId) {
+        // ✅ Pour Admin: seulement ses propres commissions
         const myTx = await this.transactionModel
           .find({
             status: TransactionStatus.COMPLETED,
@@ -651,8 +312,66 @@ export class AdminService {
   }
 
   // ============================================================
+  // MÉTHODES DE RÉCUPÉRATION
+  // ============================================================
+
+  async getRecentTransactions(limit: number = 10): Promise<any[]> {
+    return this.transactionModel
+      .find()
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .populate('senderId', 'firstName lastName email')
+      .populate('receiverId', 'firstName lastName email')
+      .exec();
+  }
+
+  async getRecentUsers(limit: number = 10): Promise<any[]> {
+    return this.userModel
+      .find()
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .select('-password')
+      .exec();
+  }
+
+  // ============================================================
   // UTILISATEURS
   // ============================================================
+
+  async getAllUsers(page: number = 1, limit: number = 20, search?: string): Promise<any> {
+    const skip = (page - 1) * limit;
+    const query: any = {};
+    
+    if (search) {
+      query.$or = [
+        { firstName: { $regex: search, $options: 'i' } },
+        { lastName: { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } },
+      ];
+    }
+
+    const [users, total] = await Promise.all([
+      this.userModel
+        .find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .select('-password')
+        .exec(),
+      this.userModel.countDocuments(query),
+    ]);
+
+    return {
+      data: users.map((u) => this.toUserResponse(u)),
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
   async getAllUsersSimple() {
     const users = await this.userModel
       .find()
@@ -670,6 +389,19 @@ export class AdminService {
     return this.toUserResponse(user);
   }
 
+  async updateUser(id: string, updateData: any): Promise<any> {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new NotFoundException('ID utilisateur invalide');
+    }
+    const user = await this.userModel
+      .findByIdAndUpdate(id, updateData, { new: true })
+      .select('-password');
+    if (!user) {
+      throw new NotFoundException('Utilisateur non trouvé');
+    }
+    return this.toUserResponse(user);
+  }
+
   async updateUserStatus(userId: string, isActive: boolean) {
     if (!Types.ObjectId.isValid(userId)) {
       throw new NotFoundException('ID utilisateur invalide');
@@ -679,6 +411,14 @@ export class AdminService {
       .select('-password');
     if (!user) throw new NotFoundException('Utilisateur non trouvé');
     return this.toUserResponse(user);
+  }
+
+  async activateUser(id: string): Promise<any> {
+    return this.updateUserStatus(id, true);
+  }
+
+  async deactivateUser(id: string): Promise<any> {
+    return this.updateUserStatus(id, false);
   }
 
   async updateUserRole(userId: string, role: string) {
@@ -705,9 +445,134 @@ export class AdminService {
     return { message: 'Utilisateur supprimé avec succès' };
   }
 
+  async updateUserBalance(id: string, amount: number, operation: 'add' | 'subtract' | 'set'): Promise<any> {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new NotFoundException('ID utilisateur invalide');
+    }
+
+    const user = await this.userModel.findById(id);
+    if (!user) {
+      throw new NotFoundException('Utilisateur non trouvé');
+    }
+
+    switch (operation) {
+      case 'add':
+        user.balance += amount;
+        break;
+      case 'subtract':
+        if (user.balance < amount) {
+          throw new BadRequestException('Solde insuffisant');
+        }
+        user.balance -= amount;
+        break;
+      case 'set':
+        if (amount < 0) {
+          throw new BadRequestException('Le solde ne peut pas être négatif');
+        }
+        user.balance = amount;
+        break;
+    }
+
+    await user.save();
+    return { success: true, balance: user.balance };
+  }
+
   // ============================================================
-  // ADMIN ACTIONS - DÉPÔT AVEC I18N
+  // TRANSACTIONS
   // ============================================================
+
+  async getAllTransactions(
+    page: number = 1,
+    limit: number = 20,
+    userId?: string,
+    type?: string,
+    status?: string,
+  ): Promise<any> {
+    const skip = (page - 1) * limit;
+    const query: any = {};
+    
+    if (userId) {
+      query.$or = [
+        { senderId: new Types.ObjectId(userId) },
+        { receiverId: new Types.ObjectId(userId) },
+      ];
+    }
+    if (type) query.type = type;
+    if (status) query.status = status;
+
+    const [transactions, total] = await Promise.all([
+      this.transactionModel
+        .find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate('senderId', 'firstName lastName email')
+        .populate('receiverId', 'firstName lastName email')
+        .exec(),
+      this.transactionModel.countDocuments(query),
+    ]);
+
+    return {
+      data: transactions,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async getAllTransactionsSimple() {
+    return this.transactionModel
+      .find()
+      .populate('senderId', 'firstName lastName email language')
+      .populate('receiverId', 'firstName lastName email language')
+      .sort({ createdAt: -1 });
+  }
+
+  async getTransactionById(transactionId: string) {
+    if (!Types.ObjectId.isValid(transactionId)) {
+      throw new NotFoundException('ID transaction invalide');
+    }
+    const transaction = await this.transactionModel
+      .findById(transactionId)
+      .populate('senderId', 'firstName lastName email language')
+      .populate('receiverId', 'firstName lastName email language');
+    if (!transaction) {
+      throw new NotFoundException('Transaction non trouvée');
+    }
+    return transaction;
+  }
+
+  async updateTransactionStatus(id: string, status: string, reason?: string): Promise<any> {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new NotFoundException('ID transaction invalide');
+    }
+
+    const transaction = await this.transactionModel.findById(id);
+    if (!transaction) {
+      throw new NotFoundException('Transaction non trouvée');
+    }
+    
+    const validStatuses = ['pending', 'completed', 'failed', 'cancelled'];
+    if (!validStatuses.includes(status)) {
+      throw new BadRequestException(`Statut invalide: ${status}`);
+    }
+
+    transaction.status = status as TransactionStatus;
+    if (reason) {
+      (transaction as any).rejectionReason = reason;
+    }
+    await transaction.save();
+
+    return transaction;
+  }
+
+  // ============================================================
+  // ADMIN ACTIONS - DÉPÔT ET RETRAIT
+  // ============================================================
+
   async depositMoney(
     adminId: string,
     userId: string,
@@ -801,9 +666,6 @@ export class AdminService {
     };
   }
 
-  // ============================================================
-  // ADMIN ACTIONS - RETRAIT AVEC I18N
-  // ============================================================
   async withdrawMoney(
     adminId: string,
     userId: string,
@@ -907,6 +769,7 @@ export class AdminService {
   // ============================================================
   // QR CODE
   // ============================================================
+
   async generateQRCode(adminId: string, type: 'deposit' | 'withdraw', amount?: number) {
     const admin = await this.userModel.findById(adminId);
     if (!admin) {
@@ -993,6 +856,7 @@ export class AdminService {
   // ============================================================
   // ADMINISTRATEURS
   // ============================================================
+
   async createAdmin(adminData: {
     email: string;
     password: string;
@@ -1095,6 +959,7 @@ export class AdminService {
   // ============================================================
   // PROFIL ADMIN
   // ============================================================
+
   async getAdminProfile(userId: string) {
     const user = await this.userModel.findById(userId).select('-password');
     if (!user) throw new NotFoundException('Administrateur non trouvé');
@@ -1118,33 +983,9 @@ export class AdminService {
   }
 
   // ============================================================
-  // TRANSACTIONS
-  // ============================================================
-  async getAllTransactionsSimple() {
-    return this.transactionModel
-      .find()
-      .populate('senderId', 'firstName lastName email language')
-      .populate('receiverId', 'firstName lastName email language')
-      .sort({ createdAt: -1 });
-  }
-
-  async getTransactionById(transactionId: string) {
-    if (!Types.ObjectId.isValid(transactionId)) {
-      throw new NotFoundException('ID transaction invalide');
-    }
-    const transaction = await this.transactionModel
-      .findById(transactionId)
-      .populate('senderId', 'firstName lastName email language')
-      .populate('receiverId', 'firstName lastName email language');
-    if (!transaction) {
-      throw new NotFoundException('Transaction non trouvée');
-    }
-    return transaction;
-  }
-
-  // ============================================================
   // PARAMÈTRES SYSTÈME
   // ============================================================
+
   async getSettings() {
     let settings = await this.settingModel.findOne();
     if (!settings) {
@@ -1200,10 +1041,166 @@ export class AdminService {
   }
 
   // ============================================================
-  // LOGS & STATS
+  // STATISTIQUES AVANCÉES
   // ============================================================
+
+  async getRevenueStats(period: 'day' | 'week' | 'month' | 'year' = 'month'): Promise<any> {
+    const now = new Date();
+    let startDate: Date;
+
+    switch (period) {
+      case 'day':
+        startDate = new Date(now.setDate(now.getDate() - 1));
+        break;
+      case 'week':
+        startDate = new Date(now.setDate(now.getDate() - 7));
+        break;
+      case 'month':
+        startDate = new Date(now.setMonth(now.getMonth() - 1));
+        break;
+      case 'year':
+        startDate = new Date(now.setFullYear(now.getFullYear() - 1));
+        break;
+      default:
+        startDate = new Date(now.setMonth(now.getMonth() - 1));
+    }
+
+    const revenue = await this.transactionModel.aggregate([
+      {
+        $match: {
+          status: TransactionStatus.COMPLETED,
+          createdAt: { $gte: startDate },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            $dateToString: { format: '%Y-%m-%d', date: '$createdAt' },
+          },
+          total: { $sum: '$amount' },
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
+
+    return {
+      period,
+      data: revenue,
+      total: revenue.reduce((sum, item) => sum + item.total, 0),
+    };
+  }
+
+  async getUserGrowthStats(period: 'day' | 'week' | 'month' | 'year' = 'month'): Promise<any> {
+    const now = new Date();
+    let startDate: Date;
+
+    switch (period) {
+      case 'day':
+        startDate = new Date(now.setDate(now.getDate() - 1));
+        break;
+      case 'week':
+        startDate = new Date(now.setDate(now.getDate() - 7));
+        break;
+      case 'month':
+        startDate = new Date(now.setMonth(now.getMonth() - 1));
+        break;
+      case 'year':
+        startDate = new Date(now.setFullYear(now.getFullYear() - 1));
+        break;
+      default:
+        startDate = new Date(now.setMonth(now.getMonth() - 1));
+    }
+
+    const growth = await this.userModel.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: startDate },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            $dateToString: { format: '%Y-%m-%d', date: '$createdAt' },
+          },
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
+
+    return {
+      period,
+      data: growth,
+      total: growth.reduce((sum, item) => sum + item.count, 0),
+    };
+  }
+
+  async getTransactionVolumeStats(period: 'day' | 'week' | 'month' | 'year' = 'month'): Promise<any> {
+    const now = new Date();
+    let startDate: Date;
+
+    switch (period) {
+      case 'day':
+        startDate = new Date(now.setDate(now.getDate() - 1));
+        break;
+      case 'week':
+        startDate = new Date(now.setDate(now.getDate() - 7));
+        break;
+      case 'month':
+        startDate = new Date(now.setMonth(now.getMonth() - 1));
+        break;
+      case 'year':
+        startDate = new Date(now.setFullYear(now.getFullYear() - 1));
+        break;
+      default:
+        startDate = new Date(now.setMonth(now.getMonth() - 1));
+    }
+
+    const volume = await this.transactionModel.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: startDate },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            $dateToString: { format: '%Y-%m-%d', date: '$createdAt' },
+          },
+          count: { $sum: 1 },
+          totalAmount: { $sum: '$amount' },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
+
+    return {
+      period,
+      data: volume,
+      totalTransactions: volume.reduce((sum, item) => sum + item.count, 0),
+      totalAmount: volume.reduce((sum, item) => sum + item.totalAmount, 0),
+    };
+  }
+
+  // ============================================================
+  // LOGS & STATS SYSTÈME
+  // ============================================================
+
   async getSystemLogs() {
     return this.logModel.find().sort({ date: -1 }).limit(50);
+  }
+
+  async clearLogs(olderThan?: string): Promise<any> {
+    const query: any = {};
+    if (olderThan) {
+      const date = new Date(olderThan);
+      if (!isNaN(date.getTime())) {
+        query.date = { $lt: date };
+      }
+    }
+    await this.logModel.deleteMany(query);
+    return { success: true, message: 'Logs effacés avec succès' };
   }
 
   async getSystemStats() {
@@ -1249,6 +1246,7 @@ export class AdminService {
   // ============================================================
   // HELPERS PRIVÉS
   // ============================================================
+
   private toUserResponse(user: UserDocument) {
     return {
       id: user._id.toString(),
