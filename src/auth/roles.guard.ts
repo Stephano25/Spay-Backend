@@ -3,12 +3,17 @@ import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@
 import { Reflector } from '@nestjs/core';
 import { UserRole } from '../users/schemas/user.schema';
 
+// ✅ CORRECTION: Définir la constante ROLES_KEY
+export const ROLES_KEY = 'roles';
+
 @Injectable()
 export class RolesGuard implements CanActivate {
   constructor(private reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const requiredRoles = this.reflector.get<UserRole[]>('roles', context.getHandler());
+    // ✅ CORRECTION: Utiliser la constante ROLES_KEY
+    const requiredRoles = this.reflector.get<UserRole[]>(ROLES_KEY, context.getHandler());
+    
     if (!requiredRoles) {
       return true;
     }
@@ -20,9 +25,13 @@ export class RolesGuard implements CanActivate {
       throw new ForbiddenException('Non authentifié');
     }
 
+    // Vérifier si l'utilisateur a l'un des rôles requis
     const hasRole = requiredRoles.some((role) => user.role === role);
+    
     if (!hasRole) {
-      throw new ForbiddenException('Accès refusé - Rôle insuffisant');
+      throw new ForbiddenException(
+        `Accès refusé - Rôle requis: ${requiredRoles.join(', ')}`
+      );
     }
 
     return true;

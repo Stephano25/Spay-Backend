@@ -5,6 +5,7 @@ import {
   Post,
   Put,
   Delete,
+  Patch,
   Body,
   Param,
   UseGuards,
@@ -127,7 +128,7 @@ export class AdminController {
   }
 
   @Post('users/:id/role')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Roles(UserRole.SUPER_ADMIN) // Seul super_admin peut changer les rôles
   async updateUserRole(@Param('id') id: string, @Body('role') role: UserRole) {
     return this.adminService.updateUserRole(id, role);
   }
@@ -268,33 +269,31 @@ export class AdminController {
   }
 
   // ============================================================
-  // GESTION DES PARAMÈTRES SYSTÈME (SUPER ADMIN UNIQUEMENT)
+  // ⭐ GESTION DES PARAMÈTRES SYSTÈME (ADMIN ET SUPER ADMIN)
   // ============================================================
 
   @Get('settings')
-  @Roles(UserRole.SUPER_ADMIN)
-  async getSettings() {
-    return this.adminService.getSettings();
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN) // ✅ CORRECTION: admin et super_admin
+  async getSettings(@Request() req) {
+    const user = req.user;
+    return this.adminService.getSettings(user);
   }
 
-  @Put('settings')
-  @Roles(UserRole.SUPER_ADMIN)
-  async updateSettings(@Body() settings: any) {
-    return this.adminService.updateSettings(settings);
+  @Patch('settings')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN) // ✅ CORRECTION: admin et super_admin
+  async updateSettings(@Request() req, @Body() settings: any) {
+    const user = req.user;
+    return this.adminService.updateSettings(settings, user);
   }
 
-  @Get('system-stats')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Get('system/stats')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN) // ✅ CORRECTION: admin et super_admin
   async getSystemStats() {
     return this.adminService.getSystemStats();
   }
 
-  // ============================================================
-  // GESTION DES LOGS (SUPER ADMIN UNIQUEMENT)
-  // ============================================================
-
-  @Get('logs')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Get('system/logs')
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN) // ✅ CORRECTION: admin et super_admin
   async getSystemLogs(
     @Query('page') page: number = 1,
     @Query('limit') limit: number = 50,
@@ -302,11 +301,11 @@ export class AdminController {
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
-    return this.adminService.getSystemLogs();
+    return this.adminService.getSystemLogs(page, limit, type, from, to);
   }
 
-  @Delete('logs')
-  @Roles(UserRole.SUPER_ADMIN)
+  @Delete('system/logs')
+  @Roles(UserRole.SUPER_ADMIN) // Seul super_admin peut effacer les logs
   async clearLogs(@Query('olderThan') olderThan?: string) {
     return this.adminService.clearLogs(olderThan);
   }

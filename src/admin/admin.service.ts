@@ -5,6 +5,7 @@ import {
   Inject,
   forwardRef,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -191,11 +192,11 @@ export class AdminService {
   }
 
   // ============================================================
-  // STATISTIQUES DES COMMISSIONS (UNIQUE MÉTHODE)
+  // STATISTIQUES DES COMMISSIONS
   // ============================================================
   async getCommissionStats(userId: string, userRole: string) {
     try {
-      const commissionRate = 0.5; // 0.5%
+      const commissionRate = 0.5;
       let totalCommission = 0;
       let commissionTransactions = 0;
       let recentCommissions = [];
@@ -205,7 +206,6 @@ export class AdminService {
       const isValidId = Types.ObjectId.isValid(userId);
 
       if (userRole === 'super_admin') {
-        // ✅ Pour SuperAdmin: toutes les commissions
         const allAdminTx = await this.transactionModel
           .find({
             status: TransactionStatus.COMPLETED,
@@ -253,7 +253,6 @@ export class AdminService {
         }
 
       } else if (userRole === 'admin' && isValidId) {
-        // ✅ Pour Admin: seulement ses propres commissions
         const myTx = await this.transactionModel
           .find({
             status: TransactionStatus.COMPLETED,
@@ -983,12 +982,21 @@ export class AdminService {
   }
 
   // ============================================================
-  // PARAMÈTRES SYSTÈME
+  // ⭐ PARAMÈTRES SYSTÈME (ADMIN ET SUPER ADMIN)
   // ============================================================
 
-  async getSettings() {
+  // src/admin/admin.service.ts
+// Partie corrigée des méthodes getSettings et updateSettings
+
+// ============================================================
+// ⭐ PARAMÈTRES SYSTÈME (ADMIN ET SUPER ADMIN)
+// ============================================================
+
+async getSettings(user?: any) {
+  try {
     let settings = await this.settingModel.findOne();
     if (!settings) {
+      // Créer les paramètres par défaut
       settings = await this.settingModel.create({
         general: {
           siteName: 'SPaye',
@@ -1014,6 +1022,8 @@ export class AdminService {
           sessionTimeout: 60,
           requireEmailVerification: true,
           requirePhoneVerification: false,
+          adminPasswordReset: false,
+          passwordResetTokenExpiry: 3600,
         },
         payment: {
           minTransaction: 100,
@@ -1021,23 +1031,238 @@ export class AdminService {
           dailyTransferLimit: 5000000,
           monthlyTransferLimit: 50000000,
           mobileMoneyEnabled: true,
-          mobileMoneyOperators: { airtel: true, orange: true, mvola: true },
-          transferFees: { airtel: 0.5, orange: 0.5, mvola: 0.5, internal: 0 },
+          mobileMoneyOperators: { 
+            airtel: true, 
+            orange: true, 
+            mvola: true 
+          },
+          transferFees: { 
+            airtel: 0.5, 
+            orange: 0.5, 
+            mvola: 0.5, 
+            internal: 0 
+          },
           currency: 'Ar',
+          commissionRate: 0.5,
+          maxCommission: 50000,
+        },
+        notification: {
+          emailNotifications: true,
+          smsNotifications: false,
+          pushNotifications: true,
+          adminAlerts: {
+            newUser: true,
+            newTransaction: true,
+            largeTransaction: true,
+            securityAlert: true,
+            systemError: true,
+          },
+          emailFrequency: 'instant',
+        },
+        customization: {
+          theme: 'light',
+          primaryColor: '#7c3aed',
+          secondaryColor: '#4f46e5',
+          logo: null,
+          favicon: null,
+          customCSS: '',
+          customJS: '',
+        },
+        securityAdvanced: {
+          apiKeys: {},
+          secrets: {},
+          smtpPassword: '',
+          jwtSecret: '',
+          encryptionKey: '',
+          rateLimit: {
+            enabled: true,
+            maxRequests: 100,
+            timeWindow: 60,
+          },
+        },
+        logging: {
+          enabled: true,
+          level: 'info',
+          retentionDays: 30,
+          maxFileSize: 50,
+        },
+        cache: {
+          enabled: true,
+          ttl: 3600,
+          maxSize: 100,
         },
       });
     }
-    return settings;
-  }
 
-  async updateSettings(settingsData: any) {
-    const settings = await this.settingModel.findOne();
-    if (!settings) {
-      return this.settingModel.create(settingsData);
+    // ✅ Convertir en objet pour manipulation
+    const settingsObj = settings.toObject ? settings.toObject() : settings;
+
+    // ⭐ Si c'est un admin (pas super_admin), masquer les données sensibles
+    if (user && user.role === 'admin') {
+      const sanitized = { ...settingsObj };
+      
+      // Supprimer les propriétés sensibles
+      const sensitiveFields = ['apiKeys', 'secrets', 'smtpPassword', 'jwtSecret', 'encryptionKey'];
+      for (const field of sensitiveFields) {
+        if (sanitized.securityAdvanced && field in sanitized.securityAdvanced) {
+          delete sanitized.securityAdvanced[field];
+        }
+      }
+      
+      // Masquer les paramètres de sécurité avancée si présents
+      if (sanitized.securityAdvanced) {
+        // Garder seulement rateLimit
+        const { rateLimit, ...rest } = sanitized.securityAdvanced;
+        sanitized.securityAdvanced = { rateLimit };
+      }
+      
+      return sanitized;
     }
-    Object.assign(settings, settingsData);
-    await settings.save();
+
+    return settingsObj;
+  } catch (error) {
+    console.error('❌ Erreur getSettings:', error);
+    // Retourner les valeurs par défaut en cas d'erreur
+    return this.getDefaultSettings();
+  }
+}
+
+private getDefaultSettings() {
+  return {
+    general: {
+      siteName: 'SPaye',
+      siteUrl: 'https://spaye.com',
+      adminEmail: 'admin@spaye.com',
+      supportEmail: 'support@spaye.com',
+      maintenanceMode: false,
+      registrationEnabled: true,
+      defaultUserRole: 'user',
+      maxFileSize: 150,
+      sessionTimeout: 30,
+    },
+    security: {
+      twoFactorAuth: false,
+      passwordMinLength: 8,
+      passwordRequireUppercase: true,
+      passwordRequireNumbers: true,
+      passwordRequireSpecial: true,
+      maxLoginAttempts: 5,
+      lockoutDuration: 30,
+      sessionTimeout: 60,
+      requireEmailVerification: true,
+      requirePhoneVerification: false,
+    },
+    payment: {
+      minTransaction: 100,
+      maxTransaction: 5000000,
+      dailyTransferLimit: 5000000,
+      monthlyTransferLimit: 50000000,
+      mobileMoneyEnabled: true,
+      mobileMoneyOperators: { airtel: true, orange: true, mvola: true },
+      transferFees: { airtel: 0.5, orange: 0.5, mvola: 0.5, internal: 0 },
+      currency: 'Ar',
+    },
+    notification: {
+      emailNotifications: true,
+      smsNotifications: false,
+      pushNotifications: true,
+      adminAlerts: {
+        newUser: true,
+        newTransaction: true,
+        largeTransaction: true,
+        securityAlert: true,
+        systemError: true,
+      },
+      emailFrequency: 'instant',
+    },
+    customization: {
+      theme: 'light',
+      primaryColor: '#7c3aed',
+      secondaryColor: '#4f46e5',
+    },
+  };
+}
+
+async updateSettings(settingsData: any, user?: any) {
+  try {
+    // ✅ Vérifier que settingsData est un objet valide
+    if (!settingsData || typeof settingsData !== 'object') {
+      throw new BadRequestException('Données de paramètres invalides');
+    }
+
+    // ⭐ Si c'est un admin (pas super_admin), limiter les modifications
+    if (user && user.role === 'admin') {
+      // Les admins ne peuvent pas modifier les paramètres sensibles
+      const sensitiveFields = ['apiKeys', 'secrets', 'smtpPassword', 'jwtSecret', 'encryptionKey'];
+      for (const field of sensitiveFields) {
+        if (settingsData.securityAdvanced && field in settingsData.securityAdvanced) {
+          delete settingsData.securityAdvanced[field];
+        }
+      }
+      
+      // Les admins ne peuvent modifier que certains champs de sécurité
+      if (settingsData.security) {
+        const allowedSecurityFields = [
+          'twoFactorAuth', 
+          'requireEmailVerification', 
+          'requirePhoneVerification'
+        ];
+        const filteredSecurity: any = {};
+        for (const field of allowedSecurityFields) {
+          if (settingsData.security[field] !== undefined) {
+            filteredSecurity[field] = settingsData.security[field];
+          }
+        }
+        settingsData.security = filteredSecurity;
+      }
+      
+      // Les admins ne peuvent pas modifier la sécurité avancée
+      if (settingsData.securityAdvanced) {
+        // Garder seulement rateLimit
+        if (settingsData.securityAdvanced.rateLimit) {
+          settingsData.securityAdvanced = { 
+            rateLimit: settingsData.securityAdvanced.rateLimit 
+          };
+        } else {
+          delete settingsData.securityAdvanced;
+        }
+      }
+    }
+
+    // ✅ Mettre à jour les paramètres
+    let settings = await this.settingModel.findOne();
+    if (!settings) {
+      // Créer avec les valeurs par défaut + les nouvelles
+      const defaultSettings = this.getDefaultSettings();
+      settings = await this.settingModel.create({
+        ...defaultSettings,
+        ...settingsData,
+      });
+    } else {
+      // Mettre à jour les champs existants
+      Object.assign(settings, settingsData);
+      await settings.save();
+    }
+
+    // ✅ Log de l'action
+    await this.logModel.create({
+      level: 'info',
+      message: `Paramètres système mis à jour par ${user?.email || 'Admin'}`,
+      date: new Date(),
+      metadata: { 
+        userRole: user?.role || 'unknown',
+        updatedFields: Object.keys(settingsData),
+      },
+    });
+
     return settings;
+  } catch (error) {
+    console.error('❌ Erreur updateSettings:', error);
+    if (error instanceof BadRequestException) {
+      throw error;
+    }
+    throw new BadRequestException('Erreur lors de la mise à jour des paramètres');
+    }
   }
 
   // ============================================================
@@ -1187,8 +1412,34 @@ export class AdminService {
   // LOGS & STATS SYSTÈME
   // ============================================================
 
-  async getSystemLogs() {
-    return this.logModel.find().sort({ date: -1 }).limit(50);
+  async getSystemLogs(page: number = 1, limit: number = 50, type?: string, from?: string, to?: string) {
+    try {
+      const query: any = {};
+      if (type) query.type = type;
+      if (from) query.date = { $gte: new Date(from) };
+      if (to) query.date = { ...query.date, $lte: new Date(to) };
+
+      const logs = await this.logModel
+        .find(query)
+        .sort({ date: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit);
+
+      const total = await this.logModel.countDocuments(query);
+
+      return {
+        data: logs,
+        meta: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
+      };
+    } catch (error) {
+      console.error('❌ Erreur getSystemLogs:', error);
+      return { data: [], meta: { total: 0, page: 1, limit: 50, totalPages: 0 } };
+    }
   }
 
   async clearLogs(olderThan?: string): Promise<any> {
@@ -1199,39 +1450,65 @@ export class AdminService {
         query.date = { $lt: date };
       }
     }
-    await this.logModel.deleteMany(query);
-    return { success: true, message: 'Logs effacés avec succès' };
+    const result = await this.logModel.deleteMany(query);
+    return { success: true, message: 'Logs effacés avec succès', deletedCount: result.deletedCount };
   }
 
   async getSystemStats() {
-    const uptime = process.uptime();
-    const memoryUsage = process.memoryUsage();
-    const [totalUsers, activeUsers, totalTransactions] = await Promise.all([
-      this.userModel.countDocuments(),
-      this.userModel.countDocuments({ isActive: true }),
-      this.transactionModel.countDocuments(),
-    ]);
-
-    let databaseSize = 'Calcul en cours...';
     try {
-      const estimatedSize = Math.round(
-        (totalUsers * 500 + totalTransactions * 200) / 1024 / 1024,
-      );
-      databaseSize = `${estimatedSize} MB`;
-    } catch {
-      databaseSize = 'Non disponible';
-    }
+      const uptime = process.uptime();
+      const memoryUsage = process.memoryUsage();
+      const [totalUsers, activeUsers, totalTransactions] = await Promise.all([
+        this.userModel.countDocuments(),
+        this.userModel.countDocuments({ isActive: true }),
+        this.transactionModel.countDocuments(),
+      ]);
 
-    return {
-      uptime: this.formatUptime(uptime),
-      memoryUsage: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)} MB / ${Math.round(memoryUsage.heapTotal / 1024 / 1024)} MB`,
-      cpuUsage: `${Math.round(process.cpuUsage().user / 1000000)}%`,
-      activeSessions: activeUsers,
-      activeUsers,
-      totalUsers,
-      totalTransactions,
-      databaseSize,
-    };
+      let databaseSize = 'Calcul en cours...';
+      try {
+        const estimatedSize = Math.round(
+          (totalUsers * 500 + totalTransactions * 200) / 1024 / 1024,
+        );
+        databaseSize = `${estimatedSize} MB`;
+      } catch {
+        databaseSize = 'Non disponible';
+      }
+
+      return {
+        uptime: this.formatUptime(uptime),
+        memoryUsage: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)} MB / ${Math.round(memoryUsage.heapTotal / 1024 / 1024)} MB`,
+        cpuUsage: `${Math.round(process.cpuUsage().user / 1000000)}%`,
+        activeSessions: activeUsers,
+        activeUsers,
+        totalUsers,
+        totalTransactions,
+        databaseSize,
+        apiCalls: await this.getApiCallsCount(),
+      };
+    } catch (error) {
+      console.error('❌ Erreur getSystemStats:', error);
+      return {
+        uptime: '0j 0h 0min',
+        memoryUsage: '0 MB / 0 MB',
+        cpuUsage: '0%',
+        activeSessions: 0,
+        activeUsers: 0,
+        totalUsers: 0,
+        totalTransactions: 0,
+        databaseSize: '0 MB',
+        apiCalls: 0,
+      };
+    }
+  }
+
+  private async getApiCallsCount(): Promise<number> {
+    try {
+      // Compter les logs d'API pour estimer le nombre d'appels
+      const count = await this.logModel.countDocuments({ type: 'api' });
+      return count || 0;
+    } catch {
+      return 0;
+    }
   }
 
   async clearCache() {

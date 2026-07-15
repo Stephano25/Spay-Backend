@@ -1,11 +1,19 @@
+// src/settings/settings.module.ts
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Setting, SettingSchema } from './schemas/setting.schema';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([{ name: Setting.name, schema: SettingSchema }]),
+    MongooseModule.forFeature([
+      { name: Setting.name, schema: SettingSchema }
+    ]),
   ],
-  exports: [MongooseModule],
+  exports: [
+    MongooseModule, // Exporter pour que d'autres modules puissent l'utiliser
+  ],
+  providers: [
+    // ✅ Ajouter un service si nécessaire
+  ],
 })
 export class SettingsModule {}
