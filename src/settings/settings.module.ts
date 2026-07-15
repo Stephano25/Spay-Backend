@@ -12,8 +12,6 @@ import { Setting, SettingSchema } from './schemas/setting.schema';
   exports: [
     MongooseModule, // Exporter pour que d'autres modules puissent l'utiliser
   ],
-  providers: [
-    // ✅ Ajouter un service si nécessaire
-  ],
+  providers: [],
 })
 export class SettingsModule {}

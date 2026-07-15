@@ -1,4 +1,3 @@
-// src/admin/admin.controller.ts
 import {
   Controller,
   Get,
@@ -128,7 +127,7 @@ export class AdminController {
   }
 
   @Post('users/:id/role')
-  @Roles(UserRole.SUPER_ADMIN) // Seul super_admin peut changer les rôles
+  @Roles(UserRole.SUPER_ADMIN)
   async updateUserRole(@Param('id') id: string, @Body('role') role: UserRole) {
     return this.adminService.updateUserRole(id, role);
   }
@@ -176,7 +175,7 @@ export class AdminController {
   }
 
   // ============================================================
-  // GESTION DES VERSEMENTS (DÉPÔTS/RETRAITS ADMIN)
+  // GESTION DES VERSEMENTS
   // ============================================================
 
   @Post('users/:userId/deposit')
@@ -269,31 +268,31 @@ export class AdminController {
   }
 
   // ============================================================
-  // ⭐ GESTION DES PARAMÈTRES SYSTÈME (ADMIN ET SUPER ADMIN)
+  // PARAMÈTRES SYSTÈME
   // ============================================================
 
   @Get('settings')
-  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN) // ✅ CORRECTION: admin et super_admin
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async getSettings(@Request() req) {
     const user = req.user;
     return this.adminService.getSettings(user);
   }
 
   @Patch('settings')
-  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN) // ✅ CORRECTION: admin et super_admin
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async updateSettings(@Request() req, @Body() settings: any) {
     const user = req.user;
     return this.adminService.updateSettings(settings, user);
   }
 
   @Get('system/stats')
-  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN) // ✅ CORRECTION: admin et super_admin
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async getSystemStats() {
     return this.adminService.getSystemStats();
   }
 
   @Get('system/logs')
-  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN) // ✅ CORRECTION: admin et super_admin
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async getSystemLogs(
     @Query('page') page: number = 1,
     @Query('limit') limit: number = 50,
@@ -305,7 +304,7 @@ export class AdminController {
   }
 
   @Delete('system/logs')
-  @Roles(UserRole.SUPER_ADMIN) // Seul super_admin peut effacer les logs
+  @Roles(UserRole.SUPER_ADMIN)
   async clearLogs(@Query('olderThan') olderThan?: string) {
     return this.adminService.clearLogs(olderThan);
   }

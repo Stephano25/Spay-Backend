@@ -1,14 +1,15 @@
-// src/admin/admin.service.ts
 import {
   Injectable,
   NotFoundException,
   Inject,
   forwardRef,
   BadRequestException,
-  ForbiddenException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
+import * as QRCode from 'qrcode';
 import { User, UserDocument, UserRole } from '../users/schemas/user.schema';
 import {
   Transaction,
@@ -19,9 +20,6 @@ import { Setting, SettingDocument } from '../settings/schemas/setting.schema';
 import { Log, LogDocument } from '../logs/schemas/log.schema';
 import { ChatGateway } from '../chat/chat.gateway';
 import { I18nService, Language } from '../i18n/i18n.service';
-import * as bcrypt from 'bcrypt';
-import * as crypto from 'crypto';
-import * as QRCode from 'qrcode';
 
 @Injectable()
 export class AdminService {
@@ -218,20 +216,20 @@ export class AdminService {
 
         commissionTransactions = allAdminTx.length;
         totalCommission = allAdminTx.reduce((sum, tx) => {
-          return sum + (tx.amount * commissionRate / 100);
+          return sum + (tx.amount * commissionRate) / 100;
         }, 0);
 
         recentCommissions = allAdminTx.slice(0, 5).map((tx: any) => {
           return {
             id: tx._id.toString(),
             adminName: 'Admin',
-            userName: tx.receiverId 
-              ? `${(tx.receiverId as any)?.firstName || ''} ${(tx.receiverId as any)?.lastName || ''}`.trim() 
-              : tx.senderId 
+            userName: tx.receiverId
+              ? `${(tx.receiverId as any)?.firstName || ''} ${(tx.receiverId as any)?.lastName || ''}`.trim()
+              : tx.senderId
                 ? `${(tx.senderId as any)?.firstName || ''} ${(tx.senderId as any)?.lastName || ''}`.trim()
                 : 'Utilisateur',
             amount: tx.amount,
-            commission: tx.amount * commissionRate / 100,
+            commission: (tx.amount * commissionRate) / 100,
             createdAt: tx.createdAt,
             type: tx.type,
             language: (tx.receiverId as any)?.language || 'fr',
@@ -248,10 +246,9 @@ export class AdminService {
 
           myCommissionTransactions = myAdminTx.length;
           myCommission = myAdminTx.reduce((sum, tx) => {
-            return sum + (tx.amount * commissionRate / 100);
+            return sum + (tx.amount * commissionRate) / 100;
           }, 0);
         }
-
       } else if (userRole === 'admin' && isValidId) {
         const myTx = await this.transactionModel
           .find({
@@ -265,19 +262,19 @@ export class AdminService {
 
         myCommissionTransactions = myTx.length;
         myCommission = myTx.reduce((sum, tx) => {
-          return sum + (tx.amount * commissionRate / 100);
+          return sum + (tx.amount * commissionRate) / 100;
         }, 0);
 
         recentCommissions = myTx.slice(0, 5).map((tx: any) => ({
           id: tx._id.toString(),
           adminName: 'Moi',
-          userName: tx.receiverId 
-            ? `${(tx.receiverId as any)?.firstName || ''} ${(tx.receiverId as any)?.lastName || ''}`.trim() 
-            : tx.senderId 
+          userName: tx.receiverId
+            ? `${(tx.receiverId as any)?.firstName || ''} ${(tx.receiverId as any)?.lastName || ''}`.trim()
+            : tx.senderId
               ? `${(tx.senderId as any)?.firstName || ''} ${(tx.senderId as any)?.lastName || ''}`.trim()
               : 'Utilisateur',
           amount: tx.amount,
-          commission: tx.amount * commissionRate / 100,
+          commission: (tx.amount * commissionRate) / 100,
           createdAt: tx.createdAt,
           type: tx.type,
           language: (tx.receiverId as any)?.language || 'fr',
@@ -340,7 +337,7 @@ export class AdminService {
   async getAllUsers(page: number = 1, limit: number = 20, search?: string): Promise<any> {
     const skip = (page - 1) * limit;
     const query: any = {};
-    
+
     if (search) {
       query.$or = [
         { firstName: { $regex: search, $options: 'i' } },
@@ -489,8 +486,8 @@ export class AdminService {
   ): Promise<any> {
     const skip = (page - 1) * limit;
     const query: any = {};
-    
-    if (userId) {
+
+    if (userId && Types.ObjectId.isValid(userId)) {
       query.$or = [
         { senderId: new Types.ObjectId(userId) },
         { receiverId: new Types.ObjectId(userId) },
@@ -553,7 +550,7 @@ export class AdminService {
     if (!transaction) {
       throw new NotFoundException('Transaction non trouvée');
     }
-    
+
     const validStatuses = ['pending', 'completed', 'failed', 'cancelled'];
     if (!validStatuses.includes(status)) {
       throw new BadRequestException(`Statut invalide: ${status}`);
@@ -636,16 +633,10 @@ export class AdminService {
 
     const userLang = (user.language || 'fr') as Language;
 
-    const depositMessage = this.i18nService.translate(
-      userLang,
-      'deposit.success',
-      { amount }
-    );
-    const commissionMessage = this.i18nService.translate(
-      userLang,
-      'deposit.commission',
-      { amount: commission }
-    );
+    const depositMessage = this.i18nService.translate(userLang, 'deposit.success', { amount });
+    const commissionMessage = this.i18nService.translate(userLang, 'deposit.commission', {
+      amount: commission,
+    });
 
     this.chatGateway?.notifyUser(userId, 'balanceUpdate', {
       newBalance: user.balance,
@@ -687,9 +678,7 @@ export class AdminService {
 
     if (user.balance < amount) {
       const userLang = (user.language || 'fr') as Language;
-      throw new BadRequestException(
-        this.i18nService.translate(userLang, 'error.insufficient_balance')
-      );
+      throw new BadRequestException(this.i18nService.translate(userLang, 'error.insufficient_balance'));
     }
 
     if (qrCode) {
@@ -736,16 +725,10 @@ export class AdminService {
 
     const userLang = (user.language || 'fr') as Language;
 
-    const withdrawalMessage = this.i18nService.translate(
-      userLang,
-      'withdrawal.success',
-      { amount }
-    );
-    const commissionMessage = this.i18nService.translate(
-      userLang,
-      'withdrawal.commission',
-      { amount: commission }
-    );
+    const withdrawalMessage = this.i18nService.translate(userLang, 'withdrawal.success', { amount });
+    const commissionMessage = this.i18nService.translate(userLang, 'withdrawal.commission', {
+      amount: commission,
+    });
 
     this.chatGateway?.notifyUser(userId, 'balanceUpdate', {
       newBalance: user.balance,
@@ -816,7 +799,9 @@ export class AdminService {
 
       const expectedSignature = crypto
         .createHash('sha256')
-        .update(`${parsed.adminId}-${parsed.action}-${parsed.amount || ''}-${new Date(parsed.timestamp).getTime()}`)
+        .update(
+          `${parsed.adminId}-${parsed.action}-${parsed.amount || ''}-${new Date(parsed.timestamp).getTime()}`,
+        )
         .digest('hex')
         .substring(0, 16);
 
@@ -893,9 +878,7 @@ export class AdminService {
 
     await this.logModel.create({
       level: 'info',
-      message: `Nouvel administrateur créé : ${adminData.email} (${
-        adminData.role || 'admin'
-      })`,
+      message: `Nouvel administrateur créé : ${adminData.email} (${adminData.role || 'admin'})`,
       date: new Date(),
       metadata: { email: adminData.email, role: adminData.role || 'admin' },
     });
@@ -920,9 +903,7 @@ export class AdminService {
 
   async deleteAdmin(adminId: string, currentAdminId: string) {
     if (adminId === currentAdminId) {
-      throw new BadRequestException(
-        'Vous ne pouvez pas vous supprimer vous-même',
-      );
+      throw new BadRequestException('Vous ne pouvez pas vous supprimer vous-même');
     }
 
     if (!Types.ObjectId.isValid(adminId)) {
@@ -935,9 +916,7 @@ export class AdminService {
     }
 
     if (admin.role !== 'admin' && admin.role !== 'super_admin') {
-      throw new BadRequestException(
-        "Cet utilisateur n'est pas un administrateur",
-      );
+      throw new BadRequestException("Cet utilisateur n'est pas un administrateur");
     }
 
     await this.userModel.findByIdAndDelete(adminId);
@@ -985,283 +964,195 @@ export class AdminService {
   // ⭐ PARAMÈTRES SYSTÈME (ADMIN ET SUPER ADMIN)
   // ============================================================
 
-  // src/admin/admin.service.ts
-// Partie corrigée des méthodes getSettings et updateSettings
-
-// ============================================================
-// ⭐ PARAMÈTRES SYSTÈME (ADMIN ET SUPER ADMIN)
-// ============================================================
-
-async getSettings(user?: any) {
-  try {
-    let settings = await this.settingModel.findOne();
-    if (!settings) {
-      // Créer les paramètres par défaut
-      settings = await this.settingModel.create({
-        general: {
-          siteName: 'SPaye',
-          siteUrl: 'https://spaye.com',
-          adminEmail: 'admin@spaye.com',
-          supportEmail: 'support@spaye.com',
-          maintenanceMode: false,
-          registrationEnabled: true,
-          defaultUserRole: 'user',
-          maxFileSize: 150,
-          sessionTimeout: 30,
-          defaultLanguage: 'fr',
-          supportedLanguages: ['fr', 'en', 'mg'],
-        },
-        security: {
-          twoFactorAuth: false,
-          passwordMinLength: 8,
-          passwordRequireUppercase: true,
-          passwordRequireNumbers: true,
-          passwordRequireSpecial: true,
-          maxLoginAttempts: 5,
-          lockoutDuration: 30,
-          sessionTimeout: 60,
-          requireEmailVerification: true,
-          requirePhoneVerification: false,
-          adminPasswordReset: false,
-          passwordResetTokenExpiry: 3600,
-        },
-        payment: {
-          minTransaction: 100,
-          maxTransaction: 5000000,
-          dailyTransferLimit: 5000000,
-          monthlyTransferLimit: 50000000,
-          mobileMoneyEnabled: true,
-          mobileMoneyOperators: { 
-            airtel: true, 
-            orange: true, 
-            mvola: true 
-          },
-          transferFees: { 
-            airtel: 0.5, 
-            orange: 0.5, 
-            mvola: 0.5, 
-            internal: 0 
-          },
-          currency: 'Ar',
-          commissionRate: 0.5,
-          maxCommission: 50000,
-        },
-        notification: {
-          emailNotifications: true,
-          smsNotifications: false,
-          pushNotifications: true,
-          adminAlerts: {
-            newUser: true,
-            newTransaction: true,
-            largeTransaction: true,
-            securityAlert: true,
-            systemError: true,
-          },
-          emailFrequency: 'instant',
-        },
-        customization: {
-          theme: 'light',
-          primaryColor: '#7c3aed',
-          secondaryColor: '#4f46e5',
-          logo: null,
-          favicon: null,
-          customCSS: '',
-          customJS: '',
-        },
-        securityAdvanced: {
-          apiKeys: {},
-          secrets: {},
-          smtpPassword: '',
-          jwtSecret: '',
-          encryptionKey: '',
-          rateLimit: {
-            enabled: true,
-            maxRequests: 100,
-            timeWindow: 60,
-          },
-        },
-        logging: {
-          enabled: true,
-          level: 'info',
-          retentionDays: 30,
-          maxFileSize: 50,
-        },
-        cache: {
-          enabled: true,
-          ttl: 3600,
-          maxSize: 100,
-        },
-      });
-    }
-
-    // ✅ Convertir en objet pour manipulation
-    const settingsObj = settings.toObject ? settings.toObject() : settings;
-
-    // ⭐ Si c'est un admin (pas super_admin), masquer les données sensibles
-    if (user && user.role === 'admin') {
-      const sanitized = { ...settingsObj };
-      
-      // Supprimer les propriétés sensibles
-      const sensitiveFields = ['apiKeys', 'secrets', 'smtpPassword', 'jwtSecret', 'encryptionKey'];
-      for (const field of sensitiveFields) {
-        if (sanitized.securityAdvanced && field in sanitized.securityAdvanced) {
-          delete sanitized.securityAdvanced[field];
-        }
+  async getSettings(user?: any) {
+    try {
+      let settings = await this.settingModel.findOne();
+      if (!settings) {
+        settings = await this.settingModel.create(this.getDefaultSettings());
       }
-      
-      // Masquer les paramètres de sécurité avancée si présents
-      if (sanitized.securityAdvanced) {
-        // Garder seulement rateLimit
-        const { rateLimit, ...rest } = sanitized.securityAdvanced;
-        sanitized.securityAdvanced = { rateLimit };
-      }
-      
-      return sanitized;
-    }
 
-    return settingsObj;
-  } catch (error) {
-    console.error('❌ Erreur getSettings:', error);
-    // Retourner les valeurs par défaut en cas d'erreur
-    return this.getDefaultSettings();
-  }
-}
+      const settingsObj = settings.toObject ? settings.toObject() : settings;
 
-private getDefaultSettings() {
-  return {
-    general: {
-      siteName: 'SPaye',
-      siteUrl: 'https://spaye.com',
-      adminEmail: 'admin@spaye.com',
-      supportEmail: 'support@spaye.com',
-      maintenanceMode: false,
-      registrationEnabled: true,
-      defaultUserRole: 'user',
-      maxFileSize: 150,
-      sessionTimeout: 30,
-    },
-    security: {
-      twoFactorAuth: false,
-      passwordMinLength: 8,
-      passwordRequireUppercase: true,
-      passwordRequireNumbers: true,
-      passwordRequireSpecial: true,
-      maxLoginAttempts: 5,
-      lockoutDuration: 30,
-      sessionTimeout: 60,
-      requireEmailVerification: true,
-      requirePhoneVerification: false,
-    },
-    payment: {
-      minTransaction: 100,
-      maxTransaction: 5000000,
-      dailyTransferLimit: 5000000,
-      monthlyTransferLimit: 50000000,
-      mobileMoneyEnabled: true,
-      mobileMoneyOperators: { airtel: true, orange: true, mvola: true },
-      transferFees: { airtel: 0.5, orange: 0.5, mvola: 0.5, internal: 0 },
-      currency: 'Ar',
-    },
-    notification: {
-      emailNotifications: true,
-      smsNotifications: false,
-      pushNotifications: true,
-      adminAlerts: {
-        newUser: true,
-        newTransaction: true,
-        largeTransaction: true,
-        securityAlert: true,
-        systemError: true,
-      },
-      emailFrequency: 'instant',
-    },
-    customization: {
-      theme: 'light',
-      primaryColor: '#7c3aed',
-      secondaryColor: '#4f46e5',
-    },
-  };
-}
+      // Si c'est un admin (pas super_admin), masquer les données sensibles
+      if (user && user.role === 'admin') {
+        const sanitized = { ...settingsObj };
 
-async updateSettings(settingsData: any, user?: any) {
-  try {
-    // ✅ Vérifier que settingsData est un objet valide
-    if (!settingsData || typeof settingsData !== 'object') {
-      throw new BadRequestException('Données de paramètres invalides');
-    }
-
-    // ⭐ Si c'est un admin (pas super_admin), limiter les modifications
-    if (user && user.role === 'admin') {
-      // Les admins ne peuvent pas modifier les paramètres sensibles
-      const sensitiveFields = ['apiKeys', 'secrets', 'smtpPassword', 'jwtSecret', 'encryptionKey'];
-      for (const field of sensitiveFields) {
-        if (settingsData.securityAdvanced && field in settingsData.securityAdvanced) {
-          delete settingsData.securityAdvanced[field];
-        }
-      }
-      
-      // Les admins ne peuvent modifier que certains champs de sécurité
-      if (settingsData.security) {
-        const allowedSecurityFields = [
-          'twoFactorAuth', 
-          'requireEmailVerification', 
-          'requirePhoneVerification'
-        ];
-        const filteredSecurity: any = {};
-        for (const field of allowedSecurityFields) {
-          if (settingsData.security[field] !== undefined) {
-            filteredSecurity[field] = settingsData.security[field];
+        const sensitiveFields = ['apiKeys', 'secrets', 'smtpPassword', 'jwtSecret', 'encryptionKey'];
+        for (const field of sensitiveFields) {
+          if (sanitized.securityAdvanced && field in sanitized.securityAdvanced) {
+            delete sanitized.securityAdvanced[field];
           }
         }
-        settingsData.security = filteredSecurity;
+
+        if (sanitized.securityAdvanced) {
+          const { rateLimit, ...rest } = sanitized.securityAdvanced;
+          sanitized.securityAdvanced = { rateLimit };
+        }
+
+        return sanitized;
       }
-      
-      // Les admins ne peuvent pas modifier la sécurité avancée
-      if (settingsData.securityAdvanced) {
-        // Garder seulement rateLimit
-        if (settingsData.securityAdvanced.rateLimit) {
-          settingsData.securityAdvanced = { 
-            rateLimit: settingsData.securityAdvanced.rateLimit 
-          };
-        } else {
-          delete settingsData.securityAdvanced;
+
+      return settingsObj;
+    } catch (error) {
+      console.error('❌ Erreur getSettings:', error);
+      return this.getDefaultSettings();
+    }
+  }
+
+  private getDefaultSettings() {
+    return {
+      general: {
+        siteName: 'SPaye',
+        siteUrl: 'https://spaye.com',
+        adminEmail: 'admin@spaye.com',
+        supportEmail: 'support@spaye.com',
+        maintenanceMode: false,
+        registrationEnabled: true,
+        defaultUserRole: 'user',
+        maxFileSize: 150,
+        sessionTimeout: 30,
+        defaultLanguage: 'fr',
+        supportedLanguages: ['fr', 'en', 'mg'],
+      },
+      security: {
+        twoFactorAuth: false,
+        passwordMinLength: 8,
+        passwordRequireUppercase: true,
+        passwordRequireNumbers: true,
+        passwordRequireSpecial: true,
+        maxLoginAttempts: 5,
+        lockoutDuration: 30,
+        sessionTimeout: 60,
+        requireEmailVerification: true,
+        requirePhoneVerification: false,
+        adminPasswordReset: false,
+        passwordResetTokenExpiry: 3600,
+      },
+      payment: {
+        minTransaction: 100,
+        maxTransaction: 5000000,
+        dailyTransferLimit: 5000000,
+        monthlyTransferLimit: 50000000,
+        mobileMoneyEnabled: true,
+        mobileMoneyOperators: { airtel: true, orange: true, mvola: true },
+        transferFees: { airtel: 0.5, orange: 0.5, mvola: 0.5, internal: 0 },
+        currency: 'Ar',
+        commissionRate: 0.5,
+        maxCommission: 50000,
+      },
+      notification: {
+        emailNotifications: true,
+        smsNotifications: false,
+        pushNotifications: true,
+        adminAlerts: {
+          newUser: true,
+          newTransaction: true,
+          largeTransaction: true,
+          securityAlert: true,
+          systemError: true,
+        },
+        emailFrequency: 'instant',
+      },
+      customization: {
+        theme: 'light',
+        primaryColor: '#7c3aed',
+        secondaryColor: '#4f46e5',
+        logo: null,
+        favicon: null,
+        customCSS: '',
+        customJS: '',
+      },
+      securityAdvanced: {
+        rateLimit: {
+          enabled: true,
+          maxRequests: 100,
+          timeWindow: 60,
+        },
+      },
+      logging: {
+        enabled: true,
+        level: 'info',
+        retentionDays: 30,
+        maxFileSize: 50,
+      },
+      cache: {
+        enabled: true,
+        ttl: 3600,
+        maxSize: 100,
+      },
+    };
+  }
+
+  async updateSettings(settingsData: any, user?: any) {
+    try {
+      if (!settingsData || typeof settingsData !== 'object') {
+        throw new BadRequestException('Données de paramètres invalides');
+      }
+
+      // Si c'est un admin (pas super_admin), limiter les modifications
+      if (user && user.role === 'admin') {
+        const sensitiveFields = ['apiKeys', 'secrets', 'smtpPassword', 'jwtSecret', 'encryptionKey'];
+        for (const field of sensitiveFields) {
+          if (settingsData.securityAdvanced && field in settingsData.securityAdvanced) {
+            delete settingsData.securityAdvanced[field];
+          }
+        }
+
+        if (settingsData.security) {
+          const allowedSecurityFields = [
+            'twoFactorAuth',
+            'requireEmailVerification',
+            'requirePhoneVerification',
+          ];
+          const filteredSecurity: any = {};
+          for (const field of allowedSecurityFields) {
+            if (settingsData.security[field] !== undefined) {
+              filteredSecurity[field] = settingsData.security[field];
+            }
+          }
+          settingsData.security = filteredSecurity;
+        }
+
+        if (settingsData.securityAdvanced) {
+          if (settingsData.securityAdvanced.rateLimit) {
+            settingsData.securityAdvanced = {
+              rateLimit: settingsData.securityAdvanced.rateLimit,
+            };
+          } else {
+            delete settingsData.securityAdvanced;
+          }
         }
       }
-    }
 
-    // ✅ Mettre à jour les paramètres
-    let settings = await this.settingModel.findOne();
-    if (!settings) {
-      // Créer avec les valeurs par défaut + les nouvelles
-      const defaultSettings = this.getDefaultSettings();
-      settings = await this.settingModel.create({
-        ...defaultSettings,
-        ...settingsData,
+      let settings = await this.settingModel.findOne();
+      if (!settings) {
+        const defaultSettings = this.getDefaultSettings();
+        settings = await this.settingModel.create({
+          ...defaultSettings,
+          ...settingsData,
+        });
+      } else {
+        Object.assign(settings, settingsData);
+        await settings.save();
+      }
+
+      await this.logModel.create({
+        level: 'info',
+        message: `Paramètres système mis à jour par ${user?.email || 'Admin'}`,
+        date: new Date(),
+        metadata: {
+          userRole: user?.role || 'unknown',
+          updatedFields: Object.keys(settingsData),
+        },
       });
-    } else {
-      // Mettre à jour les champs existants
-      Object.assign(settings, settingsData);
-      await settings.save();
-    }
 
-    // ✅ Log de l'action
-    await this.logModel.create({
-      level: 'info',
-      message: `Paramètres système mis à jour par ${user?.email || 'Admin'}`,
-      date: new Date(),
-      metadata: { 
-        userRole: user?.role || 'unknown',
-        updatedFields: Object.keys(settingsData),
-      },
-    });
-
-    return settings;
-  } catch (error) {
-    console.error('❌ Erreur updateSettings:', error);
-    if (error instanceof BadRequestException) {
-      throw error;
-    }
-    throw new BadRequestException('Erreur lors de la mise à jour des paramètres');
+      return settings;
+    } catch (error) {
+      console.error('❌ Erreur updateSettings:', error);
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException('Erreur lors de la mise à jour des paramètres');
     }
   }
 
@@ -1466,9 +1357,7 @@ async updateSettings(settingsData: any, user?: any) {
 
       let databaseSize = 'Calcul en cours...';
       try {
-        const estimatedSize = Math.round(
-          (totalUsers * 500 + totalTransactions * 200) / 1024 / 1024,
-        );
+        const estimatedSize = Math.round((totalUsers * 500 + totalTransactions * 200) / 1024 / 1024);
         databaseSize = `${estimatedSize} MB`;
       } catch {
         databaseSize = 'Non disponible';
@@ -1503,7 +1392,6 @@ async updateSettings(settingsData: any, user?: any) {
 
   private async getApiCallsCount(): Promise<number> {
     try {
-      // Compter les logs d'API pour estimer le nombre d'appels
       const count = await this.logModel.countDocuments({ type: 'api' });
       return count || 0;
     } catch {
@@ -1568,14 +1456,7 @@ async updateSettings(settingsData: any, user?: any) {
       const d = new Date();
       d.setDate(d.getDate() - i);
       const start = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-      const end = new Date(
-        d.getFullYear(),
-        d.getMonth(),
-        d.getDate(),
-        23,
-        59,
-        59,
-      );
+      const end = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59);
 
       const [users, transactions] = await Promise.all([
         this.userModel.countDocuments({ createdAt: { $gte: start, $lte: end } }),

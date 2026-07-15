@@ -1,4 +1,3 @@
-// backend/src/main.ts
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { NestExpressApplication } from '@nestjs/platform-express';
@@ -55,14 +54,19 @@ async function bootstrap() {
     maxAge: 86400,
   });
   
-  // ✅ SERVIR LES FICHIERS STATIQUES - CORRECTION
+  // ✅ CRÉATION DES DOSSIERS D'UPLOAD
   const uploadsDir = join(process.cwd(), 'uploads');
-  if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
-    console.log(`📁 Dossier uploads créé: ${uploadsDir}`);
-  }
+  const profilesDir = join(uploadsDir, 'profiles');
+  const tempDir = join(uploadsDir, 'temp');
   
-  // ✅ Servir les fichiers du dossier uploads avec le bon préfixe
+  [uploadsDir, profilesDir, tempDir].forEach(dir => {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+      console.log(`📁 Dossier créé: ${dir}`);
+    }
+  });
+  
+  // ✅ Servir les fichiers statiques
   app.useStaticAssets(uploadsDir, {
     prefix: '/uploads/',
   });

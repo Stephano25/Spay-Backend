@@ -1,4 +1,3 @@
-// src/auth/decorators/roles.decorator.ts
 import { SetMetadata } from '@nestjs/common';
 import { UserRole } from '../../users/schemas/user.schema';
 

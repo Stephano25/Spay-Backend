@@ -1,8 +1,7 @@
-// backend/src/users/users.service.ts
-import { 
-  Injectable, 
-  NotFoundException, 
-  BadRequestException, 
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
   ConflictException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -95,10 +94,12 @@ export class UsersService {
       delete sanitized[field];
     }
 
-    const user = await this.userModel.findByIdAndUpdate(userId, sanitized, {
-      new: true,
-      runValidators: true,
-    }).select('-password');
+    const user = await this.userModel
+      .findByIdAndUpdate(userId, sanitized, {
+        new: true,
+        runValidators: true,
+      })
+      .select('-password');
 
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
@@ -127,12 +128,10 @@ export class UsersService {
       throw new BadRequestException('ID utilisateur invalide');
     }
 
-    const user = await this.userModel.findByIdAndUpdate(
-      userId,
-      { isActive },
-      { new: true }
-    ).select('-password');
-    
+    const user = await this.userModel
+      .findByIdAndUpdate(userId, { isActive }, { new: true })
+      .select('-password');
+
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
     }
@@ -148,12 +147,7 @@ export class UsersService {
     const users = await this.userModel
       .find({
         isActive: true,
-        $or: [
-          { firstName: regex },
-          { lastName: regex },
-          { email: regex },
-          { phoneNumber: regex },
-        ],
+        $or: [{ firstName: regex }, { lastName: regex }, { email: regex }, { phoneNumber: regex }],
       })
       .select('firstName lastName email phoneNumber profilePicture')
       .limit(20);
@@ -227,7 +221,7 @@ export class UsersService {
   }
 
   // ============================================================
-  // PHOTO DE PROFIL - CORRIGÉ
+  // PHOTO DE PROFIL
   // ============================================================
 
   async updateProfilePicture(userId: string, url: string): Promise<any> {
@@ -239,15 +233,14 @@ export class UsersService {
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
     }
-    
-    // Supprimer l'ancienne photo si elle existe
+
     if (user.profilePicture) {
       this.tryDeleteLocalFile(user.profilePicture);
     }
-    
+
     user.profilePicture = url;
     await user.save();
-    
+
     console.log(`✅ Photo de profil mise à jour pour l'utilisateur ${userId}: ${url}`);
     return this.toResponse(user);
   }
@@ -261,11 +254,11 @@ export class UsersService {
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
     }
-    
+
     if (user.profilePicture) {
       this.tryDeleteLocalFile(user.profilePicture);
     }
-    
+
     user.profilePicture = null;
     await user.save();
     return this.toResponse(user);
@@ -273,10 +266,10 @@ export class UsersService {
 
   private tryDeleteLocalFile(url?: string | null): void {
     if (!url || typeof url !== 'string') return;
-    
+
     const filename = url.split('/').pop();
     if (!filename) return;
-    
+
     try {
       const filePath = path.join(process.cwd(), 'uploads', 'profiles', filename);
       if (fs.existsSync(filePath)) {
@@ -297,11 +290,9 @@ export class UsersService {
       throw new BadRequestException('ID utilisateur invalide');
     }
 
-    const user = await this.userModel.findByIdAndUpdate(
-      userId,
-      updateData,
-      { new: true }
-    ).select('-password');
+    const user = await this.userModel
+      .findByIdAndUpdate(userId, updateData, { new: true })
+      .select('-password');
 
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
@@ -334,12 +325,13 @@ export class UsersService {
       throw new BadRequestException('ID utilisateur invalide');
     }
 
-    const user = await this.userModel.findById(userId)
+    const user = await this.userModel
+      .findById(userId)
       .populate('friends', 'firstName lastName email profilePicture');
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
     }
-    
+
     return (user.friends || []).map((friend: any) => ({
       id: friend._id.toString(),
       name: `${friend.firstName} ${friend.lastName}`,
@@ -356,12 +348,13 @@ export class UsersService {
       throw new BadRequestException('ID utilisateur invalide');
     }
 
-    const user = await this.userModel.findById(userId)
+    const user = await this.userModel
+      .findById(userId)
       .populate('friends', 'firstName lastName email profilePicture');
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
     }
-    
+
     const friends = (user.friends || []).slice(0, 3);
     return friends.map((friend: any) => ({
       id: friend._id.toString(),
@@ -376,12 +369,13 @@ export class UsersService {
       throw new BadRequestException('ID utilisateur invalide');
     }
 
-    const user = await this.userModel.findById(userId)
+    const user = await this.userModel
+      .findById(userId)
       .populate('friends', 'firstName lastName email profilePicture');
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
     }
-    
+
     const friends = (user.friends || []).slice(3, 8);
     return friends.map((friend: any) => ({
       id: friend._id.toString(),
@@ -408,11 +402,11 @@ export class UsersService {
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
     }
-    
+
     const friendIds = user.friends || [];
     const suggestions = await this.userModel
       .find({
-        _id: { $nin: [new Types.ObjectId(userId), ...friendIds.map(id => new Types.ObjectId(id))] },
+        _id: { $nin: [new Types.ObjectId(userId), ...friendIds.map((id) => new Types.ObjectId(id))] },
         isActive: true,
       })
       .limit(5)
@@ -423,9 +417,7 @@ export class UsersService {
       id: suggestion._id.toString(),
       name: `${suggestion.firstName} ${suggestion.lastName}`,
       avatar: suggestion.profilePicture || '/assets/default-avatar.png',
-      mutualFriends: (suggestion.friends || []).filter((id: string) => 
-        friendIds.includes(id)
-      ).length || 0,
+      mutualFriends: (suggestion.friends || []).filter((id: string) => friendIds.includes(id)).length || 0,
     }));
   }
 
@@ -466,7 +458,7 @@ export class UsersService {
       throw new NotFoundException('Utilisateur non trouvé');
     }
 
-    user.friends = (user.friends || []).filter(id => id.toString() !== friendId);
+    user.friends = (user.friends || []).filter((id) => id.toString() !== friendId);
     await user.save();
 
     return { success: true };
@@ -497,11 +489,9 @@ export class UsersService {
       throw new ConflictException('Email déjà utilisé');
     }
 
-    const user = await this.userModel.findByIdAndUpdate(
-      userId,
-      { email },
-      { new: true }
-    ).select('-password');
+    const user = await this.userModel
+      .findByIdAndUpdate(userId, { email }, { new: true })
+      .select('-password');
 
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
@@ -514,11 +504,9 @@ export class UsersService {
       throw new BadRequestException('ID utilisateur invalide');
     }
 
-    const user = await this.userModel.findByIdAndUpdate(
-      userId,
-      { phoneNumber: phone },
-      { new: true }
-    ).select('-password');
+    const user = await this.userModel
+      .findByIdAndUpdate(userId, { phoneNumber: phone }, { new: true })
+      .select('-password');
 
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
@@ -574,7 +562,8 @@ export class UsersService {
       throw new BadRequestException('ID utilisateur invalide');
     }
 
-    const user = await this.userModel.findById(userId)
+    const user = await this.userModel
+      .findById(userId)
       .select('-password')
       .populate('friends', 'firstName lastName email');
 
@@ -627,7 +616,7 @@ export class UsersService {
         name: 'Firefox sur Linux',
         location: 'Lyon, France',
         lastActive: new Date(Date.now() - 86400000),
-      }
+      },
     ];
   }
 

@@ -1,21 +1,18 @@
-// backend/src/users/users.controller.ts
-import { 
-  Controller, 
-  Get, 
-  Post, 
-  Put, 
-  Delete, 
-  Body, 
-  Param, 
-  UseGuards, 
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Body,
+  Param,
+  UseGuards,
   Request,
   UseInterceptors,
   UploadedFile,
   BadRequestException,
   Patch,
   Query,
-  HttpStatus,
-  ParseFilePipeBuilder,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -58,43 +55,41 @@ export class UsersController {
 
   @Post('upload-profile-picture')
   @UseGuards(AuthGuard('jwt'))
-  @UseInterceptors(FileInterceptor('profilePicture', {
-    storage: diskStorage({
-      destination: (req, file, cb) => {
-        const uploadDir = join(process.cwd(), 'uploads', 'profiles');
-        if (!fs.existsSync(uploadDir)) {
-          fs.mkdirSync(uploadDir, { recursive: true });
-          console.log(`📁 Dossier créé: ${uploadDir}`);
-        }
-        console.log(`📁 Destination d'upload: ${uploadDir}`);
-        cb(null, uploadDir);
+  @UseInterceptors(
+    FileInterceptor('profilePicture', {
+      storage: diskStorage({
+        destination: (req, file, cb) => {
+          const uploadDir = join(process.cwd(), 'uploads', 'profiles');
+          if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+            console.log(`📁 Dossier créé: ${uploadDir}`);
+          }
+          console.log(`📁 Destination d'upload: ${uploadDir}`);
+          cb(null, uploadDir);
+        },
+        filename: (req, file, cb) => {
+          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+          const ext = extname(file.originalname);
+          const filename = `profile-${uniqueSuffix}${ext}`;
+          console.log(`📄 Fichier créé: ${filename}`);
+          cb(null, filename);
+        },
+      }),
+      limits: {
+        fileSize: 10 * 1024 * 1024, // 10MB
       },
-      filename: (req, file, cb) => {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-        const ext = extname(file.originalname);
-        const filename = `profile-${uniqueSuffix}${ext}`;
-        console.log(`📄 Fichier créé: ${filename}`);
-        cb(null, filename);
+      fileFilter: (req, file, cb) => {
+        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/heic'];
+        if (allowedTypes.includes(file.mimetype)) {
+          cb(null, true);
+        } else {
+          console.log(`❌ Type non autorisé: ${file.mimetype}`);
+          cb(new BadRequestException(`Type de fichier non autorisé: ${file.mimetype}`), false);
+        }
       },
     }),
-    limits: {
-      fileSize: 10 * 1024 * 1024, // ✅ Augmenté à 10MB
-    },
-    fileFilter: (req, file, cb) => {
-      // ✅ Accepter plus de types d'images
-      const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/heic'];
-      if (allowedTypes.includes(file.mimetype)) {
-        cb(null, true);
-      } else {
-        console.log(`❌ Type non autorisé: ${file.mimetype}`);
-        cb(new BadRequestException(`Type de fichier non autorisé: ${file.mimetype}`), false);
-      }
-    },
-  }))
-  async uploadProfilePicture(
-    @Request() req,
-    @UploadedFile() file: Express.Multer.File,
-  ) {
+  )
+  async uploadProfilePicture(@Request() req, @UploadedFile() file: Express.Multer.File) {
     console.log('📸 Fichier reçu:', file?.originalname);
     console.log('📁 Chemin:', file?.path);
     console.log('📄 Type:', file?.mimetype);
@@ -107,9 +102,9 @@ export class UsersController {
     const userId = req.user.id || req.user.userId;
     const fileUrl = `/uploads/profiles/${file.filename}`;
     console.log(`🔗 URL: ${fileUrl}`);
-    
+
     const updatedUser = await this.usersService.updateProfilePicture(userId, fileUrl);
-    
+
     return {
       success: true,
       message: 'Photo de profil mise à jour avec succès',
@@ -320,11 +315,7 @@ export class UsersController {
 
   @Post('report/:userId')
   @UseGuards(AuthGuard('jwt'))
-  async reportUser(
-    @Request() req,
-    @Param('userId') userId: string,
-    @Body('reason') reason: string,
-  ) {
+  async reportUser(@Request() req, @Param('userId') userId: string, @Body('reason') reason: string) {
     const reporterId = req.user.id;
     return this.usersService.reportUser(reporterId, userId, reason);
   }
