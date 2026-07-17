@@ -1,3 +1,4 @@
+// backend/src/chat/schemas/message.schema.ts
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 
@@ -6,6 +7,8 @@ export type MessageDocument = Message & Document;
 export enum MessageType {
   TEXT = 'text',
   IMAGE = 'image',
+  VIDEO = 'video',
+  AUDIO = 'audio',
   FILE = 'file',
   EMOJI = 'emoji',
   MONEY = 'money',
@@ -25,16 +28,16 @@ export interface MoneyTransferInfo {
 
 @Schema({ timestamps: true })
 export class Message {
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   senderId: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   receiverId: Types.ObjectId;
 
   @Prop({ required: true, enum: MessageType, default: MessageType.TEXT })
   type: string;
 
-  @Prop()
+  @Prop({ default: '' })
   content: string;
 
   @Prop()
@@ -45,6 +48,15 @@ export class Message {
 
   @Prop()
   fileSize: number;
+
+  @Prop()
+  mimeType: string; // ✅ Ajouté
+
+  @Prop()
+  duration: number; // ✅ Pour les vidéos et audios
+
+  @Prop()
+  thumbnail: string; // ✅ Miniature pour les vidéos
 
   @Prop()
   emoji: string;
@@ -81,4 +93,7 @@ export class Message {
 }
 
 export const MessageSchema = SchemaFactory.createForClass(Message);
+
 MessageSchema.index({ senderId: 1, receiverId: 1, createdAt: -1 });
+MessageSchema.index({ receiverId: 1, createdAt: -1 });
+MessageSchema.index({ createdAt: -1 });

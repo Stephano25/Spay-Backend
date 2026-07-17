@@ -1,3 +1,4 @@
+// backend/src/chat/dto/message.dto.ts
 export class SendMessageDto {
   receiverId: string;
   type: string;
@@ -5,6 +6,7 @@ export class SendMessageDto {
   fileUrl?: string;
   fileName?: string;
   fileSize?: number;
+  mimeType?: string; // ✅ Ajouté
   emoji?: string;
   moneyTransfer?: {
     amount: number;
@@ -24,6 +26,7 @@ export class MessageResponseDto {
   fileUrl?: string;
   fileName?: string;
   fileSize?: number;
+  mimeType?: string; // ✅ Ajouté
   emoji?: string;
   isRead: boolean;
   isDelivered: boolean;
@@ -31,6 +34,8 @@ export class MessageResponseDto {
   editedAt?: Date;
   isDeleted?: boolean;
   createdAt: Date;
+  duration?: number; // ✅ Ajouté pour les vidéos et audios
+  thumbnail?: string; // ✅ Ajouté pour les miniatures vidéo
   moneyTransfer?: {
     amount: number;
     status: string;

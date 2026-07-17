@@ -1,3 +1,4 @@
+// backend/src/chat/chat.service.ts
 import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -18,73 +19,43 @@ export class ChatService {
     @Inject(forwardRef(() => ChatGateway)) private chatGateway: ChatGateway,
   ) {}
 
-  async saveMessage(messageData: any): Promise<MessageResponseDto> {
-    try {
-      const senderObjectId = new Types.ObjectId(messageData.senderId);
-      const receiverObjectId = new Types.ObjectId(messageData.receiverId);
-
-      let moneyTransfer: any = undefined;
-
-      if (messageData.type === 'money' && messageData.moneyTransfer?.amount) {
-        moneyTransfer = await this.processMoneyTransfer(
-          messageData.senderId,
-          messageData.receiverId,
-          messageData.moneyTransfer.amount,
-        );
-      }
-
-      const message = new this.messageModel({
-        senderId: senderObjectId,
-        receiverId: receiverObjectId,
-        type: messageData.type || 'text',
-        content: messageData.content,
-        fileUrl: messageData.fileUrl,
-        fileName: messageData.fileName,
-        fileSize: messageData.fileSize,
-        emoji: messageData.emoji,
-        moneyTransfer,
-        isRead: false,
-        isDelivered: false,
-      });
-
-      await message.save();
-      await message.populate('senderId', 'firstName lastName profilePicture');
-
-      return this.toResponseDto(message);
-    } catch (error) {
-      throw new BadRequestException('Erreur lors de la sauvegarde du message');
+  /**
+   * ✅ Récupère les messages entre deux utilisateurs avec pagination
+   */
+  async getMessagesPaginated(
+    userId: string,
+    otherUserId: string,
+    page: number = 1,
+    limit: number = 100,
+  ): Promise<MessageResponseDto[]> {
+    if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(otherUserId)) {
+      throw new BadRequestException('ID utilisateur invalide');
     }
+
+    const userObjectId = new Types.ObjectId(userId);
+    const otherObjectId = new Types.ObjectId(otherUserId);
+    const skip = (page - 1) * limit;
+
+    const messages = await this.messageModel
+      .find({
+        $or: [
+          { senderId: userObjectId, receiverId: otherObjectId },
+          { senderId: otherObjectId, receiverId: userObjectId },
+        ],
+        isDeleted: { $ne: true },
+      })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate('senderId', 'firstName lastName profilePicture')
+      .exec();
+
+    return messages.reverse().map((msg) => this.toResponseDto(msg));
   }
 
-  private async processMoneyTransfer(senderId: string, receiverId: string, amount: number) {
-    try {
-      if (senderId === receiverId) {
-        throw new Error("Vous ne pouvez pas vous envoyer de l'argent à vous-même");
-      }
-      if (!amount || amount <= 0) {
-        throw new Error('Montant invalide');
-      }
-
-      const transaction: any = await this.transactionsService.sendMoney(senderId, {
-        receiverId,
-        amount,
-        description: 'Transfert via messagerie',
-      });
-
-      return {
-        amount,
-        status: 'completed',
-        transactionId: transaction?.id,
-      };
-    } catch (error: any) {
-      return {
-        amount,
-        status: 'failed',
-        failReason: error?.message || 'Erreur lors du transfert',
-      };
-    }
-  }
-
+  /**
+   * ✅ Récupère toutes les conversations d'un utilisateur
+   */
   async getConversations(userId: string): Promise<any[]> {
     const userObjectId = new Types.ObjectId(userId);
 
@@ -150,6 +121,8 @@ export class ChatService {
             },
             type: '$lastMessage.type',
             createdAt: '$lastMessage.createdAt',
+            fileUrl: '$lastMessage.fileUrl',
+            fileName: '$lastMessage.fileName',
           },
           lastMessageTime: '$lastMessage.createdAt',
           unreadCount: 1,
@@ -162,56 +135,77 @@ export class ChatService {
     return conversations;
   }
 
-  async getMessages(userId: string, otherUserId: string): Promise<MessageResponseDto[]> {
-    if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(otherUserId)) {
-      throw new BadRequestException('ID utilisateur invalide');
+  /**
+   * ✅ Sauvegarde un message en base de données
+   */
+  async saveMessage(messageData: any): Promise<MessageResponseDto> {
+    try {
+      const senderObjectId = new Types.ObjectId(messageData.senderId);
+      const receiverObjectId = new Types.ObjectId(messageData.receiverId);
+
+      let moneyTransfer: any = undefined;
+
+      if (messageData.type === 'money' && messageData.moneyTransfer?.amount) {
+        moneyTransfer = await this.processMoneyTransfer(
+          messageData.senderId,
+          messageData.receiverId,
+          messageData.moneyTransfer.amount,
+        );
+      }
+
+      const message = new this.messageModel({
+        senderId: senderObjectId,
+        receiverId: receiverObjectId,
+        type: messageData.type || 'text',
+        content: messageData.content || '',
+        fileUrl: messageData.fileUrl || null,
+        fileName: messageData.fileName || null,
+        fileSize: messageData.fileSize || null,
+        mimeType: messageData.mimeType || null,
+        emoji: messageData.emoji || null,
+        moneyTransfer: moneyTransfer || null,
+        duration: messageData.duration || null,
+        thumbnail: messageData.thumbnail || null,
+        isRead: false,
+        isDelivered: false,
+      });
+
+      await message.save();
+      await message.populate('senderId', 'firstName lastName profilePicture');
+
+      return this.toResponseDto(message);
+    } catch (error) {
+      throw new BadRequestException('Erreur lors de la sauvegarde du message');
     }
-
-    const userObjectId = new Types.ObjectId(userId);
-    const otherObjectId = new Types.ObjectId(otherUserId);
-
-    const messages = await this.messageModel
-      .find({
-        $or: [
-          { senderId: userObjectId, receiverId: otherObjectId },
-          { senderId: otherObjectId, receiverId: userObjectId },
-        ],
-      })
-      .sort({ createdAt: 1 })
-      .populate('senderId', 'firstName lastName profilePicture')
-      .exec();
-
-    return messages.map((msg) => this.toResponseDto(msg));
   }
 
-  async getMessagesPaginated(
-    userId: string,
-    otherUserId: string,
-    page: number = 1,
-    limit: number = 20,
-  ): Promise<MessageResponseDto[]> {
-    if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(otherUserId)) {
-      throw new BadRequestException('ID utilisateur invalide');
+  private async processMoneyTransfer(senderId: string, receiverId: string, amount: number) {
+    try {
+      if (senderId === receiverId) {
+        throw new Error("Vous ne pouvez pas vous envoyer de l'argent à vous-même");
+      }
+      if (!amount || amount <= 0) {
+        throw new Error('Montant invalide');
+      }
+
+      const transaction: any = await this.transactionsService.sendMoney(senderId, {
+        receiverId,
+        amount,
+        description: 'Transfert via messagerie',
+      });
+
+      return {
+        amount,
+        status: 'completed',
+        transactionId: transaction?.id,
+      };
+    } catch (error: any) {
+      return {
+        amount,
+        status: 'failed',
+        failReason: error?.message || 'Erreur lors du transfert',
+      };
     }
-
-    const userObjectId = new Types.ObjectId(userId);
-    const otherObjectId = new Types.ObjectId(otherUserId);
-    const skip = (page - 1) * limit;
-
-    const messages = await this.messageModel
-      .find({
-        $or: [
-          { senderId: userObjectId, receiverId: otherObjectId },
-          { senderId: otherObjectId, receiverId: userObjectId },
-        ],
-      })
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .populate('senderId', 'firstName lastName profilePicture')
-      .exec();
-
-    return messages.reverse().map((msg) => this.toResponseDto(msg));
   }
 
   async markAsRead(userId: string, senderId: string): Promise<void> {
@@ -231,11 +225,12 @@ export class ChatService {
     return this.saveMessage({ ...sendMessageDto, senderId });
   }
 
-  async uploadFile(file: Express.Multer.File): Promise<{ url: string; fileName: string; fileSize: number }> {
+  async uploadFile(file: Express.Multer.File): Promise<{ url: string; fileName: string; fileSize: number; mimeType: string }> {
     return {
       url: `/uploads/${file.filename}`,
       fileName: file.originalname,
       fileSize: file.size,
+      mimeType: file.mimetype,
     };
   }
 
@@ -319,6 +314,9 @@ export class ChatService {
     return dto;
   }
 
+  /**
+   * ✅ Convertit un message en DTO - TOUS LES CHAMPS
+   */
   private toResponseDto(message: any): MessageResponseDto {
     const senderPopulated = message.senderId && message.senderId.firstName !== undefined;
 
@@ -331,6 +329,7 @@ export class ChatService {
       fileUrl: message.isDeleted ? undefined : message.fileUrl,
       fileName: message.fileName,
       fileSize: message.fileSize,
+      mimeType: message.mimeType || null, // ✅ Ajouté
       emoji: message.emoji,
       isRead: message.isRead,
       isDelivered: message.isDelivered,
@@ -338,6 +337,8 @@ export class ChatService {
       editedAt: message.editedAt,
       isDeleted: message.isDeleted,
       createdAt: message.createdAt,
+      duration: message.duration || null, // ✅ Ajouté
+      thumbnail: message.thumbnail || null, // ✅ Ajouté
       moneyTransfer: message.moneyTransfer,
       reactions: (message.reactions || []).map((r: any) => ({
         userId: r.userId.toString(),

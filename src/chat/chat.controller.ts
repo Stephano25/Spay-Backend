@@ -1,3 +1,4 @@
+// backend/src/chat/chat.controller.ts
 import {
   Controller,
   Get,
@@ -38,7 +39,7 @@ export class ChatController {
     @Req() req,
     @Param('userId') otherUserId: string,
     @Query('page') page: string = '1',
-    @Query('limit') limit: string = '20',
+    @Query('limit') limit: string = '50',
   ) {
     const userId = req.user.userId;
     const pageNum = parseInt(page);
@@ -103,16 +104,13 @@ export class ChatController {
           cb(null, uploadPath);
         },
         filename: (req, file, cb) => {
-          const randomName = Array(32)
-            .fill(null)
-            .map(() => Math.round(Math.random() * 16).toString(16))
-            .join('');
+          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
           const ext = extname(file.originalname);
-          cb(null, `${randomName}${ext}`);
+          cb(null, `file-${uniqueSuffix}${ext}`);
         },
       }),
       limits: {
-        fileSize: 150 * 1024 * 1024,
+        fileSize: 150 * 1024 * 1024, // 150 Mo
       },
     }),
   )

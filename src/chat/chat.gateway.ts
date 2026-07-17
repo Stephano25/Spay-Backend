@@ -1,3 +1,4 @@
+// backend/src/chat/chat.gateway.ts
 import {
   WebSocketGateway,
   WebSocketServer,
@@ -8,25 +9,21 @@ import {
   MessageBody,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Logger, UseGuards, Inject, forwardRef } from '@nestjs/common';
+import { Logger, Inject, forwardRef } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model, Types } from 'mongoose';
 import { FriendsService } from '../friends/friends.service';
 import { ConversationsService } from '../conversations/conversations.service';
-
-// ✅ Interface pour les messages
-interface MessageData {
-  conversationId: string;
-  content: string;
-  type?: 'text' | 'image' | 'file';
-}
+import { Message, MessageDocument } from './schemas/message.schema';
+import { User, UserDocument } from '../users/schemas/user.schema';
 
 @WebSocketGateway({
   cors: {
-    origin: ['http://localhost:4200', 'http://localhost:4201', 'http://localhost:3000'],
+    origin: ['http://localhost:4200', 'http://localhost:4201', 'http://localhost:3000', 'http://localhost:19000'],
     credentials: true,
   },
-  // ✅ Utiliser le namespace par défaut '/' (ne pas spécifier de namespace)
 })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
@@ -43,13 +40,15 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private conversationsService: ConversationsService,
     @Inject(forwardRef(() => FriendsService))
     private friendsService: FriendsService,
+    @InjectModel(Message.name) private messageModel: Model<MessageDocument>,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
   ) {}
 
   async handleConnection(client: Socket) {
     try {
-      const token = client.handshake.auth.token || 
-                    client.handshake.headers.authorization?.split(' ')[1];
-      
+      const token = client.handshake.auth.token ||
+        client.handshake.headers.authorization?.split(' ')[1];
+
       if (!token) {
         this.logger.warn('❌ Connexion sans token');
         client.disconnect();
@@ -72,21 +71,17 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return;
       }
 
-      // ✅ Stocker la connexion
       client.data.userId = userId;
       this.addUserSocket(userId, client.id);
-      
-      // ✅ Mettre à jour le statut
       this.userStatus.set(userId, { isOnline: true, lastSeen: new Date() });
-      
+
       this.logger.log(`✅ Socket connecté: ${client.id} pour l'utilisateur ${userId}`);
       this.logger.log(`📊 Utilisateurs connectés: ${this.userSockets.size}`);
 
-      // ✅ Notifier les amis que l'utilisateur est en ligne
       await this.notifyFriendsStatus(userId, true);
-
-      // ✅ Rejoindre la room de l'utilisateur
       client.join(`user:${userId}`);
+
+      client.emit('onlineUsers', this.getOnlineUsers());
 
     } catch (error) {
       this.logger.error('❌ Erreur de connexion socket:', error);
@@ -96,26 +91,19 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   async handleDisconnect(client: Socket) {
     const userId = client.data.userId;
-    
+
     if (userId) {
       this.removeUserSocket(userId, client.id);
       this.logger.log(`🔌 Socket déconnecté: ${client.id} pour l'utilisateur ${userId}`);
-      
-      // ✅ Vérifier s'il reste des connexions
+
       const sockets = this.userSockets.get(userId);
       if (!sockets || sockets.size === 0) {
-        // ✅ Mettre à jour le statut
         this.userStatus.set(userId, { isOnline: false, lastSeen: new Date() });
-        // ✅ Notifier les amis que l'utilisateur est hors ligne
         await this.notifyFriendsStatus(userId, false);
         this.logger.log(`👤 Utilisateur ${userId} est hors ligne`);
       }
     }
   }
-
-  // ============================================================
-  // GESTION DES SOCKETS
-  // ============================================================
 
   private addUserSocket(userId: string, socketId: string) {
     if (!this.userSockets.has(userId)) {
@@ -134,9 +122,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
-  /**
-   * ✅ Notifie un utilisateur spécifique
-   */
   notifyUser(userId: string, event: string, data: any): void {
     try {
       const sockets = this.userSockets.get(userId);
@@ -151,17 +136,11 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
-  /**
-   * ✅ Notifie tous les utilisateurs
-   */
   notifyAll(event: string, data: any) {
     this.server.emit(event, data);
     this.logger.log(`📤 Notification ${event} envoyée à tous`);
   }
 
-  /**
-   * ✅ Récupérer tous les utilisateurs en ligne
-   */
   getOnlineUsers(): string[] {
     const onlineUsers: string[] = [];
     for (const [userId, status] of this.userStatus) {
@@ -172,35 +151,23 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return onlineUsers;
   }
 
-  /**
-   * ✅ Vérifier si un utilisateur est en ligne
-   */
   isUserOnline(userId: string): boolean {
     const status = this.userStatus.get(userId);
     return status?.isOnline || false;
   }
 
-  /**
-   * ✅ Récupérer le statut d'un utilisateur
-   */
   getUserStatus(userId: string): { isOnline: boolean; lastSeen: Date } | null {
     return this.userStatus.get(userId) || null;
   }
 
-  /**
-   * ✅ Méthode pour récupérer l'ID utilisateur depuis un socket
-   */
   getUserIdFromSocket(client: Socket): string | null {
     return client.data.userId || null;
   }
 
-  /**
-   * ✅ Notifier les amis du statut en ligne
-   */
   private async notifyFriendsStatus(userId: string, isOnline: boolean) {
     try {
       const friends = await this.friendsService.getFriends(userId);
-      
+
       for (const friend of friends) {
         const friendId = friend.friend?.id;
         if (friendId) {
@@ -220,13 +187,13 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   // ============================================================
-  // MESSAGES
+  // ENVOI DE MESSAGES - SAUVEGARDE COMPLÈTE EN BASE
   // ============================================================
 
   @SubscribeMessage('sendMessage')
   async handleSendMessage(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: MessageData,
+    @MessageBody() data: any,
   ) {
     const userId = client.data.userId;
     if (!userId) {
@@ -234,160 +201,206 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
-    this.logger.log(`📩 Message de ${userId} dans ${data.conversationId}`);
+    this.logger.log(`📩 Message de ${userId} vers ${data.receiverId} - Type: ${data.type}`);
 
     try {
-      // ✅ Vérifier la conversation
-      const conversation = await this.conversationsService.getConversationById(
-        data.conversationId,
-        userId,
-      );
-
-      if (!conversation) {
-        client.emit('messageError', { error: 'Conversation non trouvée' });
+      const receiverId = data.receiverId;
+      if (!receiverId) {
+        client.emit('messageError', { error: 'Destinataire manquant' });
         return;
       }
 
-      // ✅ Créer le message
-      const message = {
-        id: `msg_${Date.now()}`,
-        conversationId: data.conversationId,
+      if (userId === receiverId) {
+        client.emit('messageError', { error: 'Vous ne pouvez pas vous envoyer un message à vous-même' });
+        return;
+      }
+
+      // ✅ Récupérer les informations de l'expéditeur
+      const senderInfo = await this.getUserInfo(userId);
+
+      // ✅ Préparer les données du message - TOUS LES CHAMPS
+      const messageData = {
         senderId: userId,
-        content: data.content,
+        receiverId: receiverId,
         type: data.type || 'text',
-        createdAt: new Date(),
+        content: data.content || '',
+        fileUrl: data.fileUrl || null,
+        fileName: data.fileName || null,
+        fileSize: data.fileSize || null,
+        mimeType: data.mimeType || null,
+        emoji: data.emoji || null,
+        moneyTransfer: data.moneyTransfer || null,
+        duration: data.duration || null,
+        thumbnail: data.thumbnail || null,
         isRead: false,
+        isDelivered: false,
       };
 
-      // ✅ Envoyer le message à tous les participants
-      for (const participant of conversation.participants) {
-        const participantId = participant._id?.toString() || participant.toString();
-        if (participantId !== userId) {
-          this.notifyUser(participantId, 'newMessage', message);
-        }
+      this.logger.log(`✅ Message créé: type=${messageData.type}, fileUrl=${messageData.fileUrl ? 'oui' : 'non'}`);
+
+      // ✅ SAUVEGARDER EN BASE DE DONNÉES
+      let savedMessage = null;
+      try {
+        savedMessage = await this.saveMessageToDatabase(messageData);
+        this.logger.log(`✅ Message sauvegardé en base: ${savedMessage?._id} (${savedMessage?.type})`);
+      } catch (dbError) {
+        this.logger.error('❌ Erreur sauvegarde en base:', dbError);
+        // Continuer quand même pour ne pas bloquer l'envoi
       }
+
+      // ✅ Construire le message final avec l'ID de la base de données
+      const message = {
+        id: savedMessage?._id?.toString() || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        senderId: userId,
+        receiverId: receiverId,
+        type: messageData.type,
+        content: messageData.content,
+        fileUrl: messageData.fileUrl,
+        fileName: messageData.fileName,
+        fileSize: messageData.fileSize,
+        mimeType: messageData.mimeType,
+        emoji: messageData.emoji,
+        moneyTransfer: messageData.moneyTransfer,
+        duration: messageData.duration,
+        thumbnail: messageData.thumbnail,
+        createdAt: savedMessage?.createdAt || new Date(),
+        isRead: false,
+        isDelivered: false,
+        sender: senderInfo,
+      };
+
+      // ✅ Envoyer au destinataire
+      this.notifyUser(receiverId, 'newMessage', message);
 
       // ✅ Confirmation à l'expéditeur
       client.emit('messageSent', message);
 
+      // ✅ Mettre à jour la conversation du destinataire
+      this.notifyUser(receiverId, 'conversationUpdated', {
+        userId: userId,
+        firstName: senderInfo?.firstName || 'Utilisateur',
+        lastName: senderInfo?.lastName || '',
+        lastMessage: message,
+        lastMessageTime: message.createdAt,
+      });
+
       return message;
+
     } catch (error) {
       this.logger.error('❌ Erreur envoi message:', error);
-      client.emit('messageError', { error: 'Erreur lors de l\'envoi du message' });
+      client.emit('messageError', {
+        error: 'Erreur lors de l\'envoi du message',
+        details: error.message
+      });
     }
+  }
+
+  /**
+   * ✅ Sauvegarde un message en base de données - TOUS LES CHAMPS
+   */
+  private async saveMessageToDatabase(messageData: any): Promise<any> {
+    try {
+      const message = new this.messageModel({
+        senderId: new Types.ObjectId(messageData.senderId),
+        receiverId: new Types.ObjectId(messageData.receiverId),
+        type: messageData.type || 'text',
+        content: messageData.content || '',
+        fileUrl: messageData.fileUrl || null,
+        fileName: messageData.fileName || null,
+        fileSize: messageData.fileSize || null,
+        mimeType: messageData.mimeType || null,
+        emoji: messageData.emoji || null,
+        moneyTransfer: messageData.moneyTransfer || null,
+        duration: messageData.duration || null,
+        thumbnail: messageData.thumbnail || null,
+        isRead: false,
+        isDelivered: false,
+      });
+
+      await message.save();
+      this.logger.log(`✅ Message sauvegardé: ${message._id} (${message.type})`);
+
+      // Populer les informations de l'expéditeur
+      await message.populate('senderId', 'firstName lastName profilePicture');
+
+      return message;
+    } catch (error) {
+      this.logger.error('❌ Erreur sauvegarde message:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * ✅ Récupère les informations d'un utilisateur
+   */
+  private async getUserInfo(userId: string): Promise<any> {
+    try {
+      const user = await this.userModel.findById(userId).select('firstName lastName profilePicture');
+      if (user) {
+        return {
+          id: user._id.toString(),
+          firstName: user.firstName,
+          lastName: user.lastName,
+          profilePicture: user.profilePicture,
+        };
+      }
+    } catch (error) {
+      this.logger.error('❌ Erreur récupération utilisateur:', error);
+    }
+    return {
+      id: userId,
+      firstName: 'Utilisateur',
+      lastName: '',
+    };
   }
 
   @SubscribeMessage('typing')
   async handleTyping(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { conversationId: string; isTyping: boolean },
+    @MessageBody() data: { receiverId: string; isTyping: boolean },
   ) {
     const userId = client.data.userId;
     if (!userId) return;
 
-    try {
-      const conversation = await this.conversationsService.getConversationById(
-        data.conversationId,
-        userId,
-      );
+    this.logger.log(`✍️ Typing: ${userId} -> ${data.receiverId} (${data.isTyping})`);
+    this.notifyUser(data.receiverId, 'userTyping', {
+      userId,
+      isTyping: data.isTyping,
+    });
+  }
 
-      if (conversation) {
-        for (const participant of conversation.participants) {
-          const participantId = participant._id?.toString() || participant.toString();
-          if (participantId !== userId) {
-            this.notifyUser(participantId, 'typing', {
-              userId,
-              conversationId: data.conversationId,
-              isTyping: data.isTyping,
-            });
-          }
-        }
-      }
-    } catch (error) {
-      this.logger.error('❌ Erreur typing:', error);
-    }
+  @SubscribeMessage('getOnlineUsers')
+  async handleGetOnlineUsers(@ConnectedSocket() client: Socket) {
+    const userId = client.data.userId;
+    if (!userId) return;
+
+    const onlineUsers = this.getOnlineUsers();
+    client.emit('onlineUsers', onlineUsers);
   }
 
   @SubscribeMessage('readMessages')
   async handleReadMessages(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { conversationId: string; messageIds: string[] },
+    @MessageBody() data: { receiverId: string; messageIds: string[] },
   ) {
     const userId = client.data.userId;
     if (!userId) return;
 
     try {
-      const conversation = await this.conversationsService.getConversationById(
-        data.conversationId,
-        userId,
+      await this.messageModel.updateMany(
+        {
+          _id: { $in: data.messageIds.map(id => new Types.ObjectId(id)) },
+          receiverId: new Types.ObjectId(userId),
+        },
+        { isRead: true }
       );
 
-      if (conversation) {
-        for (const participant of conversation.participants) {
-          const participantId = participant._id?.toString() || participant.toString();
-          if (participantId !== userId) {
-            this.notifyUser(participantId, 'messagesRead', {
-              conversationId: data.conversationId,
-              userId,
-              messageIds: data.messageIds,
-            });
-          }
-        }
-      }
+      this.notifyUser(data.receiverId, 'messagesRead', {
+        userId,
+        messageIds: data.messageIds,
+      });
     } catch (error) {
       this.logger.error('❌ Erreur marquage lu:', error);
     }
-  }
-
-  @SubscribeMessage('joinConversation')
-  async handleJoinConversation(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { conversationId: string },
-  ) {
-    const userId = client.data.userId;
-    if (!userId) return;
-
-    try {
-      const conversation = await this.conversationsService.getConversationById(
-        data.conversationId,
-        userId,
-      );
-
-      if (conversation) {
-        client.join(`conversation:${data.conversationId}`);
-        this.logger.log(`👤 ${userId} a rejoint la conversation ${data.conversationId}`);
-        client.emit('conversationJoined', { conversationId: data.conversationId });
-      }
-    } catch (error) {
-      this.logger.error('❌ Erreur joinConversation:', error);
-      client.emit('conversationError', { error: 'Conversation non trouvée' });
-    }
-  }
-
-  @SubscribeMessage('leaveConversation')
-  async handleLeaveConversation(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { conversationId: string },
-  ) {
-    client.leave(`conversation:${data.conversationId}`);
-    this.logger.log(`👤 ${client.data.userId} a quitté la conversation ${data.conversationId}`);
-  }
-
-  @SubscribeMessage('joinRoom')
-  async handleJoinRoom(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { roomId: string },
-  ) {
-    client.join(data.roomId);
-    this.logger.log(`👤 ${client.data.userId} a rejoint la room ${data.roomId}`);
-  }
-
-  @SubscribeMessage('leaveRoom')
-  async handleLeaveRoom(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { roomId: string },
-  ) {
-    client.leave(data.roomId);
-    this.logger.log(`👤 ${client.data.userId} a quitté la room ${data.roomId}`);
   }
 }
