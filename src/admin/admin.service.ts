@@ -1,9 +1,11 @@
+// backend/src/admin/admin.service.ts
 import {
   Injectable,
   NotFoundException,
   Inject,
   forwardRef,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -21,8 +23,10 @@ import { Log, LogDocument } from '../logs/schemas/log.schema';
 import { ChatGateway } from '../chat/chat.gateway';
 import { I18nService, Language } from '../i18n/i18n.service';
 
-@Injectable()
+@Injectable() // ✅ AJOUTÉ
 export class AdminService {
+  private readonly logger = new Logger(AdminService.name); // ✅ AJOUTÉ
+
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(Transaction.name) private transactionModel: Model<TransactionDocument>,
@@ -37,8 +41,10 @@ export class AdminService {
   // ============================================================
   async getDashboardStats(userId: string, userRole: string) {
     try {
+      this.logger.log(`📊 getDashboardStats pour ${userRole} ${userId}`); // ✅ AJOUTÉ
+
       if (!Types.ObjectId.isValid(userId)) {
-        console.warn('⚠️ ID utilisateur invalide pour getDashboardStats');
+        this.logger.warn('⚠️ ID utilisateur invalide pour getDashboardStats');
         return this.getEmptyDashboardStats(userRole);
       }
 
@@ -164,7 +170,7 @@ export class AdminService {
         userRole,
       };
     } catch (error) {
-      console.error('❌ Erreur getDashboardStats:', error);
+      this.logger.error('❌ Erreur getDashboardStats:', error);
       return this.getEmptyDashboardStats(userRole);
     }
   }
@@ -194,6 +200,8 @@ export class AdminService {
   // ============================================================
   async getCommissionStats(userId: string, userRole: string) {
     try {
+      this.logger.log(`💰 getCommissionStats pour ${userRole} ${userId}`);
+
       const commissionRate = 0.5;
       let totalCommission = 0;
       let commissionTransactions = 0;
@@ -294,7 +302,7 @@ export class AdminService {
         userRole,
       };
     } catch (error) {
-      console.error('❌ Erreur getCommissionStats:', error);
+      this.logger.error('❌ Erreur getCommissionStats:', error);
       return {
         totalCommission: 0,
         commissionTransactions: 0,
@@ -994,7 +1002,7 @@ export class AdminService {
 
       return settingsObj;
     } catch (error) {
-      console.error('❌ Erreur getSettings:', error);
+      this.logger.error('❌ Erreur getSettings:', error);
       return this.getDefaultSettings();
     }
   }
@@ -1148,7 +1156,7 @@ export class AdminService {
 
       return settings;
     } catch (error) {
-      console.error('❌ Erreur updateSettings:', error);
+      this.logger.error('❌ Erreur updateSettings:', error);
       if (error instanceof BadRequestException) {
         throw error;
       }
@@ -1328,7 +1336,7 @@ export class AdminService {
         },
       };
     } catch (error) {
-      console.error('❌ Erreur getSystemLogs:', error);
+      this.logger.error('❌ Erreur getSystemLogs:', error);
       return { data: [], meta: { total: 0, page: 1, limit: 50, totalPages: 0 } };
     }
   }
@@ -1375,7 +1383,7 @@ export class AdminService {
         apiCalls: await this.getApiCallsCount(),
       };
     } catch (error) {
-      console.error('❌ Erreur getSystemStats:', error);
+      this.logger.error('❌ Erreur getSystemStats:', error);
       return {
         uptime: '0j 0h 0min',
         memoryUsage: '0 MB / 0 MB',
@@ -1443,7 +1451,7 @@ export class AdminService {
     };
   }
 
-  private formatUptime(seconds: number): string {
+  private formatUptime(seconds: number): string { // ✅ AJOUTÉ
     const days = Math.floor(seconds / 86400);
     const hours = Math.floor((seconds % 86400) / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);

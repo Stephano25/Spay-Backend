@@ -32,7 +32,11 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema);
 
-// Liste des utilisateurs à créer
+// Liste des utilisateurs à créer avec leurs soldes
+// ✅ SUPER ADMIN: 2 000 000
+// ✅ ADMIN: 1 000 000
+// ✅ USER: 1 000 000
+// ✅ TEST: 1 000 000
 const DEFAULT_USERS = [
   {
     email: 'superadmin@spaye.com',
@@ -43,6 +47,7 @@ const DEFAULT_USERS = [
     phoneNumber: '0340000001',
     language: 'fr',
     bio: 'Administrateur principal du système SPaye',
+    balance: 2000000, // ✅ 2 000 000 pour superadmin
   },
   {
     email: 'admin@spaye.com',
@@ -53,6 +58,7 @@ const DEFAULT_USERS = [
     phoneNumber: '0340000002',
     language: 'fr',
     bio: 'Administrateur SPaye',
+    balance: 1000000, // ✅ 1 000 000 pour admin
   },
   {
     email: 'user@spaye.com',
@@ -63,6 +69,7 @@ const DEFAULT_USERS = [
     phoneNumber: '0340000003',
     language: 'fr',
     bio: 'Utilisateur de test',
+    balance: 1000000, // ✅ 1 000 000 pour user
   },
   {
     email: 'test@gmail.com',
@@ -73,6 +80,51 @@ const DEFAULT_USERS = [
     phoneNumber: '0340000004',
     language: 'en',
     bio: 'Test user with Gmail',
+    balance: 1000000, // ✅ 1 000 000 pour test
+  },
+  {
+    email: 'olivah.k@gmail.com',
+    password: 'Admin@2024',
+    firstName: 'Olivah',
+    lastName: 'K',
+    role: 'admin',
+    phoneNumber: '0340000005',
+    language: 'fr',
+    bio: 'Administratrice SPaye',
+    balance: 1000000, // ✅ 1 000 000 pour olivah
+  },
+  {
+    email: 'jean.dupont@gmail.com',
+    password: 'User@2024',
+    firstName: 'Jean',
+    lastName: 'Dupont',
+    role: 'user',
+    phoneNumber: '0340000006',
+    language: 'fr',
+    bio: 'Utilisateur test',
+    balance: 1000000, // ✅ 1 000 000 pour jean
+  },
+  {
+    email: 'marie.martin@gmail.com',
+    password: 'User@2024',
+    firstName: 'Marie',
+    lastName: 'Martin',
+    role: 'user',
+    phoneNumber: '0340000007',
+    language: 'fr',
+    bio: 'Utilisatrice test',
+    balance: 1000000, // ✅ 1 000 000 pour marie
+  },
+  {
+    email: 'pierre.durand@gmail.com',
+    password: 'User@2024',
+    firstName: 'Pierre',
+    lastName: 'Durand',
+    role: 'user',
+    phoneNumber: '0340000008',
+    language: 'fr',
+    bio: 'Utilisateur test',
+    balance: 1000000, // ✅ 1 000 000 pour pierre
   },
 ];
 
@@ -113,13 +165,13 @@ async function initUsers() {
     if (existingCount > 0) {
       console.log(`ℹ️ ${existingCount} utilisateur(s) existent déjà dans la base.\n`);
       console.log('📋 UTILISATEURS EXISTANTS:');
-      console.log('='.repeat(60));
+      console.log('='.repeat(70));
       
-      const existingUsers = await User.find().select('email role firstName lastName').lean();
+      const existingUsers = await User.find().select('email role firstName lastName balance').lean();
       for (const user of existingUsers) {
-        console.log(`   ${user.email} (${user.role}) - ${user.firstName} ${user.lastName}`);
+        console.log(`   ${user.email} (${user.role}) - ${user.firstName} ${user.lastName} - 💰 ${user.balance.toLocaleString()} Ar`);
       }
-      console.log('='.repeat(60));
+      console.log('='.repeat(70));
       console.log('\n❓ Voulez-vous continuer et ajouter les utilisateurs manquants ?');
       console.log('   Si vous voulez tout réinitialiser, exécutez: docker-compose exec mongodb mongosh -u admin -p spaye2024 --authenticationDatabase admin --eval "use spaye; db.users.drop();"\n');
     }
@@ -128,14 +180,14 @@ async function initUsers() {
 
     // Traiter chaque utilisateur
     for (const userData of DEFAULT_USERS) {
-      console.log(`👤 Traitement de: ${userData.email} (${userData.role})`);
+      console.log(`👤 Traitement de: ${userData.email} (${userData.role}) - 💰 ${userData.balance.toLocaleString()} Ar`);
 
       try {
         // Vérifier si l'utilisateur existe
         let existing = await User.findOne({ email: userData.email });
 
         if (existing) {
-          console.log(`   ⚠️ Existe déjà (${existing.role})`);
+          console.log(`   ⚠️ Existe déjà (${existing.role}) - 💰 ${existing.balance.toLocaleString()} Ar`);
           stats.skipped++;
           stats.total++;
           continue;
@@ -152,7 +204,7 @@ async function initUsers() {
           lastName: userData.lastName,
           phoneNumber: userData.phoneNumber,
           qrCode,
-          balance: 1000000,
+          balance: userData.balance || 1000000, // ✅ Solde par défaut 1 000 000
           role: userData.role,
           isActive: true,
           isGoogleUser: false,
@@ -164,7 +216,7 @@ async function initUsers() {
         });
 
         await newUser.save();
-        console.log(`   ✅ Créé avec succès (QR: ${qrCode})`);
+        console.log(`   ✅ Créé avec succès (QR: ${qrCode}) - 💰 ${newUser.balance.toLocaleString()} Ar`);
         stats.created++;
         stats.total++;
 
@@ -179,23 +231,27 @@ async function initUsers() {
     }
 
     // Afficher le résumé
-    console.log('\n' + '='.repeat(60));
+    console.log('\n' + '='.repeat(70));
     console.log('✅ INITIALISATION TERMINÉE');
-    console.log('='.repeat(60));
+    console.log('='.repeat(70));
     console.log(`📊 ${stats.created} créé(s), ${stats.updated} mis à jour, ${stats.skipped} ignoré(s)`);
     console.log(`📝 Total utilisateurs: ${stats.total}`);
     console.log('');
     console.log('📋 COMPTES DISPONIBLES:');
-    console.log('='.repeat(60));
-    console.log('🔑 SUPER ADMIN: superadmin@spaye.com / superadmin@2026');
-    console.log('🔑 ADMIN: admin@spaye.com / admin@2026');
-    console.log('👤 USER: user@spaye.com / user@2026');
-    console.log('👤 TEST: test@gmail.com / Test@123');
-    console.log('='.repeat(60));
+    console.log('='.repeat(70));
+    console.log('🔑 SUPER ADMIN (💰 2 000 000 Ar): superadmin@spaye.com / superadmin@2026');
+    console.log('🔑 ADMIN (💰 1 000 000 Ar): admin@spaye.com / admin@2026');
+    console.log('👤 USER (💰 1 000 000 Ar): user@spaye.com / user@2026');
+    console.log('👤 TEST (💰 1 000 000 Ar): test@gmail.com / Test@123');
+    console.log('👤 ADMIN (💰 1 000 000 Ar): olivah.k@gmail.com / Admin@2024');
+    console.log('👤 USER (💰 1 000 000 Ar): jean.dupont@gmail.com / User@2024');
+    console.log('👤 USER (💰 1 000 000 Ar): marie.martin@gmail.com / User@2024');
+    console.log('👤 USER (💰 1 000 000 Ar): pierre.durand@gmail.com / User@2024');
+    console.log('='.repeat(70));
     console.log('💡 Pour vous connecter:');
     console.log('   POST http://localhost:3000/api/auth/login');
-    console.log('   { "email": "admin@spaye.com", "password": "admin@2026" }');
-    console.log('='.repeat(60));
+    console.log('   { "email": "user@spaye.com", "password": "user@2026" }');
+    console.log('='.repeat(70));
 
     await mongoose.disconnect();
     console.log('\n🔌 Déconnecté de MongoDB');

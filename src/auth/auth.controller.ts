@@ -1,4 +1,3 @@
-// auth/auth.controller.ts - Ajouter ces endpoints
 import { Controller, Post, Body, UseGuards, Get, Req, Res, Patch } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
@@ -24,30 +23,29 @@ export class AuthController {
   @Get('profile')
   @UseGuards(JwtAuthGuard)
   async getProfile(@Req() req) {
-    const userId = req.user.userId;
+    // ✅ Utiliser req.user.userId
+    const userId = req.user?.userId || req.user?.sub;
     return this.authService.getProfile(userId);
   }
 
   @Post('change-password')
   @UseGuards(JwtAuthGuard)
   async changePassword(@Req() req, @Body() changePasswordDto: ChangePasswordDto) {
-    const userId = req.user.userId;
+    const userId = req.user?.userId || req.user?.sub;
     return this.authService.changePassword(userId, changePasswordDto);
   }
 
-  // ✅ CHANGER LA LANGUE
   @Patch('language')
   @UseGuards(JwtAuthGuard)
   async changeLanguage(@Req() req, @Body('language') language: string) {
-    const userId = req.user.userId;
+    const userId = req.user?.userId || req.user?.sub;
     return this.authService.changeLanguage(userId, language);
   }
 
-  // ✅ RÉCUPÉRER LA LANGUE
   @Get('language')
   @UseGuards(JwtAuthGuard)
   async getLanguage(@Req() req) {
-    const userId = req.user.userId;
+    const userId = req.user?.userId || req.user?.sub;
     return this.authService.getUserLanguage(userId);
   }
 

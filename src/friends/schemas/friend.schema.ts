@@ -31,4 +31,8 @@ export class Friend {
 }
 
 export const FriendSchema = SchemaFactory.createForClass(Friend);
+// Index pour éviter les doublons
 FriendSchema.index({ userId: 1, friendId: 1 }, { unique: true });
+// Index pour les requêtes de recherche
+FriendSchema.index({ userId: 1, status: 1 });
+FriendSchema.index({ friendId: 1, status: 1 });

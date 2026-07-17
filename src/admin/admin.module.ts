@@ -1,4 +1,4 @@
-// src/admin/admin.module.ts
+// backend/src/admin/admin.module.ts
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AdminController } from './admin.controller';
@@ -8,6 +8,7 @@ import { Transaction, TransactionSchema } from '../transactions/schemas/transact
 import { Setting, SettingSchema } from '../settings/schemas/setting.schema';
 import { Log, LogSchema } from '../logs/schemas/log.schema';
 import { ChatModule } from '../chat/chat.module';
+import { ConversationsModule } from '../conversations/conversations.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { ChatModule } from '../chat/chat.module';
       { name: Log.name, schema: LogSchema },
     ]),
     forwardRef(() => ChatModule),
+    forwardRef(() => ConversationsModule),
   ],
   controllers: [AdminController],
   providers: [AdminService],

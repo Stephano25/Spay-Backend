@@ -8,276 +8,386 @@ import {
   MessageBody,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { forwardRef, Inject } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Logger, UseGuards, Inject, forwardRef } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { ChatService } from './chat.service';
+import { ConfigService } from '@nestjs/config';
 import { FriendsService } from '../friends/friends.service';
+import { ConversationsService } from '../conversations/conversations.service';
+
+// ✅ Interface pour les messages
+interface MessageData {
+  conversationId: string;
+  content: string;
+  type?: 'text' | 'image' | 'file';
+}
 
 @WebSocketGateway({
   cors: {
-    origin: '*',
+    origin: ['http://localhost:4200', 'http://localhost:4201', 'http://localhost:3000'],
     credentials: true,
   },
-  namespace: '/',
+  // ✅ Utiliser le namespace par défaut '/' (ne pas spécifier de namespace)
 })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
-  @WebSocketServer() server: Server;
-  private connectedUsers = new Map<string, string>();
-  private userSockets = new Map<string, string[]>();
+  @WebSocketServer()
+  server: Server;
+
+  private readonly logger = new Logger(ChatGateway.name);
+  private userSockets: Map<string, Set<string>> = new Map();
+  private userStatus: Map<string, { isOnline: boolean; lastSeen: Date }> = new Map();
 
   constructor(
-    @Inject(forwardRef(() => ChatService)) private chatService: ChatService,
-    @Inject(forwardRef(() => FriendsService)) private friendsService: FriendsService,
     private jwtService: JwtService,
     private configService: ConfigService,
+    @Inject(forwardRef(() => ConversationsService))
+    private conversationsService: ConversationsService,
+    @Inject(forwardRef(() => FriendsService))
+    private friendsService: FriendsService,
   ) {}
 
-  async handleConnection(client: Socket): Promise<void> {
+  async handleConnection(client: Socket) {
     try {
-      let token = client.handshake.auth?.token ||
-                  client.handshake.headers?.authorization?.replace('Bearer ', '');
-
+      const token = client.handshake.auth.token || 
+                    client.handshake.headers.authorization?.split(' ')[1];
+      
       if (!token) {
-        client.emit('error', { message: 'Token manquant' });
+        this.logger.warn('❌ Connexion sans token');
         client.disconnect();
         return;
       }
 
       const secret = this.configService.get<string>('JWT_SECRET');
-      
       if (!secret) {
-        client.emit('error', { message: 'Erreur de configuration serveur' });
+        this.logger.error('❌ JWT_SECRET non configuré');
         client.disconnect();
         return;
       }
 
-      const payload = this.jwtService.verify(token, {
-        secret: secret,
-      });
-
-      const userId = payload.sub;
+      const payload = this.jwtService.verify(token, { secret });
+      const userId = payload.userId || payload.sub;
 
       if (!userId) {
+        this.logger.warn('❌ Token sans userId');
         client.disconnect();
         return;
       }
 
+      // ✅ Stocker la connexion
       client.data.userId = userId;
-      this.connectedUsers.set(userId, client.id);
+      this.addUserSocket(userId, client.id);
+      
+      // ✅ Mettre à jour le statut
+      this.userStatus.set(userId, { isOnline: true, lastSeen: new Date() });
+      
+      this.logger.log(`✅ Socket connecté: ${client.id} pour l'utilisateur ${userId}`);
+      this.logger.log(`📊 Utilisateurs connectés: ${this.userSockets.size}`);
 
-      if (!this.userSockets.has(userId)) {
-        this.userSockets.set(userId, []);
-      }
-      this.userSockets.get(userId).push(client.id);
+      // ✅ Notifier les amis que l'utilisateur est en ligne
+      await this.notifyFriendsStatus(userId, true);
 
-      client.join(`user_${userId}`);
+      // ✅ Rejoindre la room de l'utilisateur
+      client.join(`user:${userId}`);
 
-      try {
-        const friends = await this.friendsService.getFriends(userId);
-        for (const f of friends) {
-          const friendId = f.friendId?.toString();
-          if (friendId && friendId !== userId) {
-            this.server.to(`user_${friendId}`).emit('userOnline', {
-              userId: userId,
-              isOnline: true,
-            });
-          }
-        }
-      } catch (error) {
-        // Non bloquant
-      }
-
-      const onlineUsers = Array.from(this.connectedUsers.keys());
-      client.emit('onlineUsers', onlineUsers);
     } catch (error) {
-      client.emit('error', { message: 'Erreur d\'authentification' });
+      this.logger.error('❌ Erreur de connexion socket:', error);
       client.disconnect();
     }
   }
 
-  async handleDisconnect(client: Socket): Promise<void> {
-    const userId = client.data?.userId;
-    if (!userId) return;
-
-    const sockets = this.userSockets.get(userId) || [];
-    const index = sockets.indexOf(client.id);
-    if (index !== -1) {
-      sockets.splice(index, 1);
-    }
-
-    if (sockets.length === 0) {
-      this.userSockets.delete(userId);
-      this.connectedUsers.delete(userId);
-
-      try {
-        const friends = await this.friendsService.getFriends(userId);
-        for (const f of friends) {
-          const friendId = f.friendId?.toString();
-          if (friendId && friendId !== userId) {
-            this.server.to(`user_${friendId}`).emit('userOnline', {
-              userId: userId,
-              isOnline: false,
-            });
-          }
-        }
-      } catch (error) {
-        // Non bloquant
+  async handleDisconnect(client: Socket) {
+    const userId = client.data.userId;
+    
+    if (userId) {
+      this.removeUserSocket(userId, client.id);
+      this.logger.log(`🔌 Socket déconnecté: ${client.id} pour l'utilisateur ${userId}`);
+      
+      // ✅ Vérifier s'il reste des connexions
+      const sockets = this.userSockets.get(userId);
+      if (!sockets || sockets.size === 0) {
+        // ✅ Mettre à jour le statut
+        this.userStatus.set(userId, { isOnline: false, lastSeen: new Date() });
+        // ✅ Notifier les amis que l'utilisateur est hors ligne
+        await this.notifyFriendsStatus(userId, false);
+        this.logger.log(`👤 Utilisateur ${userId} est hors ligne`);
       }
     }
   }
 
-  getOnlineUsers(): string[] {
-    return Array.from(this.connectedUsers.keys());
+  // ============================================================
+  // GESTION DES SOCKETS
+  // ============================================================
+
+  private addUserSocket(userId: string, socketId: string) {
+    if (!this.userSockets.has(userId)) {
+      this.userSockets.set(userId, new Set());
+    }
+    this.userSockets.get(userId)!.add(socketId);
   }
 
-  getConnectedUsersCount(): number {
-    return this.connectedUsers.size;
+  private removeUserSocket(userId: string, socketId: string) {
+    const sockets = this.userSockets.get(userId);
+    if (sockets) {
+      sockets.delete(socketId);
+      if (sockets.size === 0) {
+        this.userSockets.delete(userId);
+      }
+    }
   }
+
+  /**
+   * ✅ Notifie un utilisateur spécifique
+   */
+  notifyUser(userId: string, event: string, data: any): void {
+    try {
+      const sockets = this.userSockets.get(userId);
+      if (sockets && sockets.size > 0) {
+        this.logger.log(`📤 Notification ${event} envoyée à ${userId}`);
+        this.server.to(`user:${userId}`).emit(event, data);
+      } else {
+        this.logger.warn(`⚠️ Utilisateur ${userId} non connecté, notification ${event} non envoyée`);
+      }
+    } catch (error) {
+      this.logger.error(`❌ Erreur notification ${event} à ${userId}:`, error);
+    }
+  }
+
+  /**
+   * ✅ Notifie tous les utilisateurs
+   */
+  notifyAll(event: string, data: any) {
+    this.server.emit(event, data);
+    this.logger.log(`📤 Notification ${event} envoyée à tous`);
+  }
+
+  /**
+   * ✅ Récupérer tous les utilisateurs en ligne
+   */
+  getOnlineUsers(): string[] {
+    const onlineUsers: string[] = [];
+    for (const [userId, status] of this.userStatus) {
+      if (status.isOnline) {
+        onlineUsers.push(userId);
+      }
+    }
+    return onlineUsers;
+  }
+
+  /**
+   * ✅ Vérifier si un utilisateur est en ligne
+   */
+  isUserOnline(userId: string): boolean {
+    const status = this.userStatus.get(userId);
+    return status?.isOnline || false;
+  }
+
+  /**
+   * ✅ Récupérer le statut d'un utilisateur
+   */
+  getUserStatus(userId: string): { isOnline: boolean; lastSeen: Date } | null {
+    return this.userStatus.get(userId) || null;
+  }
+
+  /**
+   * ✅ Méthode pour récupérer l'ID utilisateur depuis un socket
+   */
+  getUserIdFromSocket(client: Socket): string | null {
+    return client.data.userId || null;
+  }
+
+  /**
+   * ✅ Notifier les amis du statut en ligne
+   */
+  private async notifyFriendsStatus(userId: string, isOnline: boolean) {
+    try {
+      const friends = await this.friendsService.getFriends(userId);
+      
+      for (const friend of friends) {
+        const friendId = friend.friend?.id;
+        if (friendId) {
+          const friendSockets = this.userSockets.get(friendId);
+          if (friendSockets && friendSockets.size > 0) {
+            this.server.to(`user:${friendId}`).emit('userStatus', {
+              userId,
+              isOnline,
+              lastSeen: new Date(),
+            });
+          }
+        }
+      }
+    } catch (error) {
+      this.logger.error('❌ Erreur notification statut:', error);
+    }
+  }
+
+  // ============================================================
+  // MESSAGES
+  // ============================================================
 
   @SubscribeMessage('sendMessage')
-  async handleMessage(@ConnectedSocket() client: Socket, @MessageBody() data: any): Promise<void> {
-    const senderId = client.data?.userId;
-    if (!senderId) {
-      client.emit('error', { message: 'Non authentifié' });
+  async handleSendMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: MessageData,
+  ) {
+    const userId = client.data.userId;
+    if (!userId) {
+      client.emit('messageError', { error: 'Utilisateur non authentifié' });
       return;
     }
 
-    if (senderId === data.receiverId) {
-      client.emit('error', { message: 'Vous ne pouvez pas vous envoyer de message à vous-même' });
-      return;
-    }
-
-    const canSend = await this.friendsService.checkBlockStatus(senderId, data.receiverId);
-    if (!canSend.canMessage) {
-      client.emit('messageBlocked', {
-        receiverId: data.receiverId,
-        reason: 'Bloqué',
-      });
-      return;
-    }
+    this.logger.log(`📩 Message de ${userId} dans ${data.conversationId}`);
 
     try {
-      const message = await this.chatService.saveMessage({
-        ...data,
-        senderId,
-      });
+      // ✅ Vérifier la conversation
+      const conversation = await this.conversationsService.getConversationById(
+        data.conversationId,
+        userId,
+      );
 
-      const receiverSocketIds = this.userSockets.get(data.receiverId) || [];
-      receiverSocketIds.forEach((sid) => {
-        this.server.to(sid).emit('newMessage', message);
-      });
+      if (!conversation) {
+        client.emit('messageError', { error: 'Conversation non trouvée' });
+        return;
+      }
 
+      // ✅ Créer le message
+      const message = {
+        id: `msg_${Date.now()}`,
+        conversationId: data.conversationId,
+        senderId: userId,
+        content: data.content,
+        type: data.type || 'text',
+        createdAt: new Date(),
+        isRead: false,
+      };
+
+      // ✅ Envoyer le message à tous les participants
+      for (const participant of conversation.participants) {
+        const participantId = participant._id?.toString() || participant.toString();
+        if (participantId !== userId) {
+          this.notifyUser(participantId, 'newMessage', message);
+        }
+      }
+
+      // ✅ Confirmation à l'expéditeur
       client.emit('messageSent', message);
 
-      this.server.to(`user_${data.receiverId}`).emit('conversationUpdated', {
-        userId: senderId,
-        lastMessage: this.getLastMessagePreview(message),
-        lastMessageTime: message.createdAt,
-      });
+      return message;
     } catch (error) {
-      client.emit('error', { message: 'Erreur lors de l\'envoi du message' });
+      this.logger.error('❌ Erreur envoi message:', error);
+      client.emit('messageError', { error: 'Erreur lors de l\'envoi du message' });
     }
-  }
-
-  private getLastMessagePreview(message: any): string {
-    if (message.type === 'emoji') return message.emoji;
-    if (message.type === 'money') {
-      const status = message.moneyTransfer?.status;
-      const amount = message.moneyTransfer?.amount ?? 0;
-      if (status === 'failed') return `💸 Transfert échoué (${amount} Ar)`;
-      return `💸 Transfert de ${amount} Ar`;
-    }
-    if (message.type === 'image') return '📷 Photo';
-    if (message.type === 'file') return `📎 ${message.fileName || 'Fichier'}`;
-    return message.content || '[Média]';
   }
 
   @SubscribeMessage('typing')
   async handleTyping(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { receiverId: string; isTyping: boolean },
-  ): Promise<void> {
-    const senderId = client.data?.userId;
-    if (!senderId) return;
-
-    const canSend = await this.friendsService.checkBlockStatus(senderId, data.receiverId);
-    if (!canSend.canMessage) return;
-
-    const receiverSocketIds = this.userSockets.get(data.receiverId) || [];
-    receiverSocketIds.forEach((sid) => {
-      this.server.to(sid).emit('userTyping', {
-        userId: senderId,
-        isTyping: data.isTyping,
-      });
-    });
-  }
-
-  @SubscribeMessage('markAsRead')
-  async handleMarkAsRead(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { senderId: string },
-  ): Promise<void> {
-    const userId = client.data?.userId;
+    @MessageBody() data: { conversationId: string; isTyping: boolean },
+  ) {
+    const userId = client.data.userId;
     if (!userId) return;
 
-    await this.chatService.markAsRead(userId, data.senderId);
+    try {
+      const conversation = await this.conversationsService.getConversationById(
+        data.conversationId,
+        userId,
+      );
 
-    const senderSocketIds = this.userSockets.get(data.senderId) || [];
-    senderSocketIds.forEach((sid) => {
-      this.server.to(sid).emit('messagesRead', { by: userId });
-    });
-  }
-
-  @SubscribeMessage('startCall')
-  async handleStartCall(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { receiverId: string; type: 'audio' | 'video' },
-  ): Promise<void> {
-    const senderId = client.data?.userId;
-    if (!senderId) return;
-
-    const receiverSocketIds = this.userSockets.get(data.receiverId) || [];
-    receiverSocketIds.forEach((sid) => {
-      this.server.to(sid).emit('incomingCall', {
-        from: senderId,
-        type: data.type,
-      });
-    });
-  }
-
-  @SubscribeMessage('answerCall')
-  async handleAnswerCall(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { callerId: string; accepted: boolean },
-  ): Promise<void> {
-    const userId = client.data?.userId;
-    if (!userId) return;
-
-    const callerSocketIds = this.userSockets.get(data.callerId) || [];
-    callerSocketIds.forEach((sid) => {
-      this.server.to(sid).emit('callAnswered', {
-        by: userId,
-        accepted: data.accepted,
-      });
-    });
-  }
-
-  @SubscribeMessage('getOnlineUsers')
-  handleGetOnlineUsers(@ConnectedSocket() client: Socket): void {
-    const userId = client.data?.userId;
-    if (!userId) return;
-
-    const onlineUsers = Array.from(this.connectedUsers.keys());
-    client.emit('onlineUsers', onlineUsers);
-  }
-
-  notifyUser(userId: string, event: string, data: any): void {
-    const socketIds = this.userSockets.get(userId);
-    if (socketIds) {
-      socketIds.forEach((socketId) => {
-        this.server.to(socketId).emit(event, data);
-      });
+      if (conversation) {
+        for (const participant of conversation.participants) {
+          const participantId = participant._id?.toString() || participant.toString();
+          if (participantId !== userId) {
+            this.notifyUser(participantId, 'typing', {
+              userId,
+              conversationId: data.conversationId,
+              isTyping: data.isTyping,
+            });
+          }
+        }
+      }
+    } catch (error) {
+      this.logger.error('❌ Erreur typing:', error);
     }
+  }
+
+  @SubscribeMessage('readMessages')
+  async handleReadMessages(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { conversationId: string; messageIds: string[] },
+  ) {
+    const userId = client.data.userId;
+    if (!userId) return;
+
+    try {
+      const conversation = await this.conversationsService.getConversationById(
+        data.conversationId,
+        userId,
+      );
+
+      if (conversation) {
+        for (const participant of conversation.participants) {
+          const participantId = participant._id?.toString() || participant.toString();
+          if (participantId !== userId) {
+            this.notifyUser(participantId, 'messagesRead', {
+              conversationId: data.conversationId,
+              userId,
+              messageIds: data.messageIds,
+            });
+          }
+        }
+      }
+    } catch (error) {
+      this.logger.error('❌ Erreur marquage lu:', error);
+    }
+  }
+
+  @SubscribeMessage('joinConversation')
+  async handleJoinConversation(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { conversationId: string },
+  ) {
+    const userId = client.data.userId;
+    if (!userId) return;
+
+    try {
+      const conversation = await this.conversationsService.getConversationById(
+        data.conversationId,
+        userId,
+      );
+
+      if (conversation) {
+        client.join(`conversation:${data.conversationId}`);
+        this.logger.log(`👤 ${userId} a rejoint la conversation ${data.conversationId}`);
+        client.emit('conversationJoined', { conversationId: data.conversationId });
+      }
+    } catch (error) {
+      this.logger.error('❌ Erreur joinConversation:', error);
+      client.emit('conversationError', { error: 'Conversation non trouvée' });
+    }
+  }
+
+  @SubscribeMessage('leaveConversation')
+  async handleLeaveConversation(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { conversationId: string },
+  ) {
+    client.leave(`conversation:${data.conversationId}`);
+    this.logger.log(`👤 ${client.data.userId} a quitté la conversation ${data.conversationId}`);
+  }
+
+  @SubscribeMessage('joinRoom')
+  async handleJoinRoom(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { roomId: string },
+  ) {
+    client.join(data.roomId);
+    this.logger.log(`👤 ${client.data.userId} a rejoint la room ${data.roomId}`);
+  }
+
+  @SubscribeMessage('leaveRoom')
+  async handleLeaveRoom(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { roomId: string },
+  ) {
+    client.leave(data.roomId);
+    this.logger.log(`👤 ${client.data.userId} a quitté la room ${data.roomId}`);
   }
 }

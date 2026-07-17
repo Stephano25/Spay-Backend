@@ -1,4 +1,3 @@
-// auth/auth.service.ts
 import {
   Injectable,
   ConflictException,
@@ -48,7 +47,6 @@ export class AuthService {
     const hashedPassword = await bcrypt.hash(registerDto.password, 10);
     const qrCode = await this.generateUniqueQrCode();
 
-    // ✅ Définir la langue par défaut
     const language = registerDto.language || 'fr';
 
     const user = new this.userModel({
@@ -62,7 +60,7 @@ export class AuthService {
       role: UserRole.USER,
       isActive: true,
       lastLogin: new Date(),
-      language: language, // ✅ AJOUT
+      language: language,
     });
 
     await user.save();
@@ -142,7 +140,6 @@ export class AuthService {
     return { message: 'Mot de passe modifié avec succès' };
   }
 
-  // ✅ GOOGLE OAUTH
   async loginWithGoogle(googleUser: any) {
     this.logger.log(`🔑 Connexion Google: ${googleUser.email}`);
 
@@ -167,7 +164,7 @@ export class AuthService {
         isActive: true,
         lastLogin: new Date(),
         isGoogleUser: true,
-        language: 'fr', // ✅ Langue par défaut pour Google
+        language: 'fr',
       });
       await user.save();
       this.logger.log(`✅ Utilisateur Google créé: ${email}`);
@@ -192,7 +189,6 @@ export class AuthService {
     };
   }
 
-  // ✅ CHANGER LA LANGUE DE L'UTILISATEUR
   async changeLanguage(userId: string, language: string) {
     const validLanguages: Language[] = ['fr', 'en', 'mg'];
     if (!validLanguages.includes(language as Language)) {
@@ -222,7 +218,6 @@ export class AuthService {
     };
   }
 
-  // ✅ RÉCUPÉRER LA LANGUE DE L'UTILISATEUR
   async getUserLanguage(userId: string) {
     const user = await this.userModel.findById(userId).select('language');
     if (!user) {
@@ -289,6 +284,9 @@ export class AuthService {
     return this.toUserResponse(user);
   }
 
+  /**
+   * ✅ SIGN TOKEN - CORRIGÉ avec userId et sub
+   */
   private signToken(user: UserDocument): string {
     const secret = this.configService.get<string>('JWT_SECRET');
     
@@ -297,14 +295,18 @@ export class AuthService {
       throw new Error('JWT_SECRET non configuré');
     }
     
+    const payload = {
+      sub: user._id.toString(),
+      userId: user._id.toString(), // ✅ AJOUT de userId
+      email: user.email,
+      role: user.role,
+      language: user.language || 'fr',
+    };
+    
+    this.logger.log(`🔑 Token généré pour ${user.email} avec userId: ${payload.userId}`);
+    
     return this.jwtService.sign(
-      {
-        sub: user._id.toString(),
-        userId: user._id.toString(),
-        email: user.email,
-        role: user.role,
-        language: user.language || 'fr', // ✅ Ajout de la langue dans le token
-      },
+      payload,
       {
         secret: secret,
         expiresIn: '7d',
@@ -341,7 +343,7 @@ export class AuthService {
       lastLogin: user.lastLogin,
       bio: user.bio,
       isGoogleUser: user.isGoogleUser || false,
-      language: user.language || 'fr', // ✅ AJOUT
+      language: user.language || 'fr',
     };
   }
 }

@@ -1,3 +1,4 @@
+// backend/src/chat/chat.module.ts
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { JwtModule } from '@nestjs/jwt';
@@ -9,6 +10,7 @@ import { Message, MessageSchema } from './schemas/message.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { FriendsModule } from '../friends/friends.module';
 import { TransactionsModule } from '../transactions/transactions.module';
+import { ConversationsModule } from '../conversations/conversations.module';
 
 @Module({
   imports: [
@@ -26,6 +28,7 @@ import { TransactionsModule } from '../transactions/transactions.module';
       inject: [ConfigService],
     }),
     forwardRef(() => FriendsModule),
+    forwardRef(() => ConversationsModule),
     TransactionsModule,
   ],
   controllers: [ChatController],
