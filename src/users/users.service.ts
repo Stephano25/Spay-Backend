@@ -1,8 +1,10 @@
+// src/users/users.service.ts
 import {
   Injectable,
   NotFoundException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -94,6 +96,12 @@ export class UsersService {
       delete sanitized[field];
     }
 
+    // ✅ Vérifier si l'utilisateur existe
+    const existing = await this.userModel.findById(userId);
+    if (!existing) {
+      throw new NotFoundException('Utilisateur non trouvé');
+    }
+
     const user = await this.userModel
       .findByIdAndUpdate(userId, sanitized, {
         new: true,
@@ -171,6 +179,11 @@ export class UsersService {
     if (!user) {
       throw new NotFoundException('Utilisateur non trouvé');
     }
+    
+    if (amount < 0 && user.balance < Math.abs(amount)) {
+      throw new BadRequestException('Solde insuffisant');
+    }
+
     user.balance += amount;
     await user.save();
     return this.toResponse(user);
@@ -289,6 +302,9 @@ export class UsersService {
     if (!Types.ObjectId.isValid(userId)) {
       throw new BadRequestException('ID utilisateur invalide');
     }
+
+    // ✅ Protection - Ne pas permettre de changer le rôle via le profil
+    delete updateData.role;
 
     const user = await this.userModel
       .findByIdAndUpdate(userId, updateData, { new: true })

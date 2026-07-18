@@ -69,15 +69,17 @@ export class User {
   @Prop({ default: 'fr' })
   language: string;
 
-  @Prop()
-  createdAt?: Date;
+  // ✅ Ajout des timestamps explicites pour compatibilité
+  @Prop({ type: Date, default: Date.now })
+  createdAt: Date;
 
-  @Prop()
-  updatedAt?: Date;
+  @Prop({ type: Date, default: Date.now })
+  updatedAt: Date;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
 
+// ✅ Index optimisés
 UserSchema.index({ role: 1 });
 UserSchema.index({ isActive: 1 });
 UserSchema.index({ firstName: 'text', lastName: 'text' });
@@ -85,3 +87,4 @@ UserSchema.index({ language: 1 });
 UserSchema.index({ email: 1 });
 UserSchema.index({ phoneNumber: 1 });
 UserSchema.index({ qrCode: 1 });
+UserSchema.index({ balance: -1 });

@@ -19,9 +19,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
   async validate(payload: any) {
     console.log('📌 [JWT] Payload reçu:', JSON.stringify(payload, null, 2));
-    
+
     // ✅ Récupérer l'userId du payload
-    const userId = payload.userId || payload.sub;
+    const userId = payload.userId || payload.sub || payload.id;
     if (!userId) {
       console.error('❌ [JWT] userId manquant dans le payload');
       throw new UnauthorizedException('Token invalide: userId manquant');
@@ -36,13 +36,17 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('Utilisateur non trouvé');
     }
 
-    // ✅ Retourner les informations de l'utilisateur
-    const result = { 
+    // ✅ IMPORTANT : on expose à la fois "id" et "userId" pointant
+    // vers la même valeur, pour être compatible avec TOUT le code
+    // existant (certains controllers lisent req.user.id, d'autres
+    // req.user.userId).
+    const result = {
+      id: userId,
       userId: userId,
       email: payload.email || user.email,
-      role: payload.role || user.role || 'user'
+      role: payload.role || user.role || 'user',
     };
-    
+
     console.log(`✅ [JWT] User validated:`, JSON.stringify(result, null, 2));
     return result;
   }

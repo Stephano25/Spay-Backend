@@ -1,3 +1,4 @@
+// src/users/users.controller.ts
 import {
   Controller,
   Get,
@@ -13,6 +14,7 @@ import {
   BadRequestException,
   Patch,
   Query,
+  ForbiddenException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -20,6 +22,7 @@ import { extname, join } from 'path';
 import * as fs from 'fs';
 import { UsersService } from './users.service';
 import { AuthGuard } from '@nestjs/passport';
+import { UserRole } from './schemas/user.schema';
 
 @Controller('users')
 export class UsersController {
@@ -32,20 +35,29 @@ export class UsersController {
   @Get('profile')
   @UseGuards(AuthGuard('jwt'))
   async getProfile(@Request() req) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     return this.usersService.findById(userId);
   }
 
   @Put('profile')
   @UseGuards(AuthGuard('jwt'))
   async updateProfile(@Request() req, @Body() updateData: any) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     return this.usersService.updateProfile(userId, updateData);
   }
 
   @Get('profile/:id')
   @UseGuards(AuthGuard('jwt'))
-  async getProfileById(@Param('id') id: string) {
+  async getProfileById(@Request() req, @Param('id') id: string) {
+    // Vérifier si l'utilisateur a le droit de voir ce profil
+    const currentUserId = req.user.id || req.user.userId;
+    if (currentUserId !== id) {
+      const currentUser = await this.usersService.findById(currentUserId);
+      const isAdmin = currentUser?.role === UserRole.ADMIN || currentUser?.role === UserRole.SUPER_ADMIN;
+      if (!isAdmin) {
+        throw new ForbiddenException('Vous ne pouvez pas voir le profil d\'un autre utilisateur');
+      }
+    }
     return this.usersService.findById(id);
   }
 
@@ -116,7 +128,7 @@ export class UsersController {
   @Delete('profile-picture')
   @UseGuards(AuthGuard('jwt'))
   async deleteProfilePicture(@Request() req) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     const result = await this.usersService.deleteProfilePicture(userId);
     return {
       success: true,
@@ -132,14 +144,14 @@ export class UsersController {
   @Get('settings')
   @UseGuards(AuthGuard('jwt'))
   async getUserSettings(@Request() req) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     return this.usersService.getUserSettings(userId);
   }
 
   @Patch('settings')
   @UseGuards(AuthGuard('jwt'))
   async updateUserSettings(@Request() req, @Body() settings: any) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     return this.usersService.updateUserSettings(userId, settings);
   }
 
@@ -150,98 +162,98 @@ export class UsersController {
   @Get('friends/count')
   @UseGuards(AuthGuard('jwt'))
   async getFriendsCount(@Request() req) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     return this.usersService.getFriendsCount(userId);
   }
 
   @Get('posts/count')
   @UseGuards(AuthGuard('jwt'))
   async getPostsCount(@Request() req) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     return this.usersService.getPostsCount(userId);
   }
 
   @Get('friends')
   @UseGuards(AuthGuard('jwt'))
   async getFriends(@Request() req) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     return this.usersService.getFriends(userId);
   }
 
   @Get('friends/close')
   @UseGuards(AuthGuard('jwt'))
   async getCloseFriends(@Request() req) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     return this.usersService.getCloseFriends(userId);
   }
 
   @Get('friends/acquaintances')
   @UseGuards(AuthGuard('jwt'))
   async getAcquaintances(@Request() req) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     return this.usersService.getAcquaintances(userId);
   }
 
   @Get('friends/requests')
   @UseGuards(AuthGuard('jwt'))
   async getFriendRequests(@Request() req) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     return this.usersService.getFriendRequests(userId);
   }
 
   @Get('friends/blocked')
   @UseGuards(AuthGuard('jwt'))
   async getBlockedUsers(@Request() req) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     return this.usersService.getBlockedUsers(userId);
   }
 
   @Get('friends/suggestions')
   @UseGuards(AuthGuard('jwt'))
   async getFriendSuggestions(@Request() req) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     return this.usersService.getFriendSuggestions(userId);
   }
 
   @Post('friends/accept/:requestId')
   @UseGuards(AuthGuard('jwt'))
   async acceptFriendRequest(@Request() req, @Param('requestId') requestId: string) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     return this.usersService.acceptFriendRequest(userId, requestId);
   }
 
   @Post('friends/reject/:requestId')
   @UseGuards(AuthGuard('jwt'))
   async rejectFriendRequest(@Request() req, @Param('requestId') requestId: string) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     return this.usersService.rejectFriendRequest(userId, requestId);
   }
 
   @Post('friends/request/:userId')
   @UseGuards(AuthGuard('jwt'))
   async sendFriendRequest(@Request() req, @Param('userId') friendId: string) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     return this.usersService.sendFriendRequest(userId, friendId);
   }
 
   @Delete('friends/:friendId')
   @UseGuards(AuthGuard('jwt'))
   async unfriend(@Request() req, @Param('friendId') friendId: string) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     return this.usersService.unfriend(userId, friendId);
   }
 
   @Post('friends/block/:userId')
   @UseGuards(AuthGuard('jwt'))
   async blockUser(@Request() req, @Param('userId') userId: string) {
-    const currentUserId = req.user.id;
+    const currentUserId = req.user.id || req.user.userId;
     return this.usersService.blockUser(currentUserId, userId);
   }
 
   @Post('friends/unblock/:userId')
   @UseGuards(AuthGuard('jwt'))
   async unblockUser(@Request() req, @Param('userId') userId: string) {
-    const currentUserId = req.user.id;
+    const currentUserId = req.user.id || req.user.userId;
     return this.usersService.unblockUser(currentUserId, userId);
   }
 
@@ -252,35 +264,35 @@ export class UsersController {
   @Patch('email')
   @UseGuards(AuthGuard('jwt'))
   async changeEmail(@Request() req, @Body('email') email: string) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     return this.usersService.changeEmail(userId, email);
   }
 
   @Patch('phone')
   @UseGuards(AuthGuard('jwt'))
   async changePhoneNumber(@Request() req, @Body('phoneNumber') phone: string) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     return this.usersService.changePhone(userId, phone);
   }
 
   @Post('deactivate')
   @UseGuards(AuthGuard('jwt'))
   async deactivateAccount(@Request() req, @Body('password') password: string) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     return this.usersService.deactivateAccount(userId, password);
   }
 
   @Post('delete')
   @UseGuards(AuthGuard('jwt'))
   async deleteAccount(@Request() req, @Body('password') password: string) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     return this.usersService.deleteAccount(userId, password);
   }
 
   @Get('export-data')
   @UseGuards(AuthGuard('jwt'))
   async downloadUserData(@Request() req) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     return this.usersService.downloadUserData(userId);
   }
 
@@ -291,21 +303,21 @@ export class UsersController {
   @Get('devices')
   @UseGuards(AuthGuard('jwt'))
   async getDevices(@Request() req) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     return this.usersService.getDevices(userId);
   }
 
   @Delete('devices/:deviceId')
   @UseGuards(AuthGuard('jwt'))
   async revokeDevice(@Request() req, @Param('deviceId') deviceId: string) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     return this.usersService.revokeDevice(userId, deviceId);
   }
 
   @Post('devices/logout-all')
   @UseGuards(AuthGuard('jwt'))
   async logoutAllDevices(@Request() req) {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     return this.usersService.logoutAllDevices(userId);
   }
 
@@ -316,7 +328,7 @@ export class UsersController {
   @Post('report/:userId')
   @UseGuards(AuthGuard('jwt'))
   async reportUser(@Request() req, @Param('userId') userId: string, @Body('reason') reason: string) {
-    const reporterId = req.user.id;
+    const reporterId = req.user.id || req.user.userId;
     return this.usersService.reportUser(reporterId, userId, reason);
   }
 
@@ -340,8 +352,9 @@ export class UsersController {
   @Get()
   @UseGuards(AuthGuard('jwt'))
   async getAllUsers(@Request() req) {
-    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
-      throw new BadRequestException('Accès refusé - Admin requis');
+    const userRole = req.user.role;
+    if (userRole !== UserRole.ADMIN && userRole !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException('Accès refusé - Admin requis');
     }
     return this.usersService.findAll();
   }
@@ -349,8 +362,9 @@ export class UsersController {
   @Get(':id')
   @UseGuards(AuthGuard('jwt'))
   async getUserById(@Request() req, @Param('id') id: string) {
-    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
-      throw new BadRequestException('Accès refusé - Admin requis');
+    const userRole = req.user.role;
+    if (userRole !== UserRole.ADMIN && userRole !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException('Accès refusé - Admin requis');
     }
     return this.usersService.findById(id);
   }
@@ -358,8 +372,13 @@ export class UsersController {
   @Put(':id')
   @UseGuards(AuthGuard('jwt'))
   async updateUser(@Request() req, @Param('id') id: string, @Body() updateData: any) {
-    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
-      throw new BadRequestException('Accès refusé - Admin requis');
+    const userRole = req.user.role;
+    if (userRole !== UserRole.ADMIN && userRole !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException('Accès refusé - Admin requis');
+    }
+    // Seul SUPER_ADMIN peut changer les rôles
+    if (updateData.role && userRole !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException('Seul un Super Admin peut modifier les rôles');
     }
     return this.usersService.update(id, updateData);
   }
@@ -367,8 +386,9 @@ export class UsersController {
   @Delete(':id')
   @UseGuards(AuthGuard('jwt'))
   async deleteUser(@Request() req, @Param('id') id: string) {
-    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
-      throw new BadRequestException('Accès refusé - Admin requis');
+    const userRole = req.user.role;
+    if (userRole !== UserRole.ADMIN && userRole !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException('Accès refusé - Admin requis');
     }
     await this.usersService.delete(id);
     return { success: true, message: 'Utilisateur supprimé' };
@@ -377,8 +397,12 @@ export class UsersController {
   @Post(':id/balance')
   @UseGuards(AuthGuard('jwt'))
   async updateBalance(@Request() req, @Param('id') id: string, @Body('amount') amount: number) {
-    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
-      throw new BadRequestException('Accès refusé - Admin requis');
+    const userRole = req.user.role;
+    if (userRole !== UserRole.ADMIN && userRole !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException('Accès refusé - Admin requis');
+    }
+    if (typeof amount !== 'number' || isNaN(amount)) {
+      throw new BadRequestException('Montant invalide');
     }
     return this.usersService.updateBalance(id, amount);
   }
@@ -386,8 +410,12 @@ export class UsersController {
   @Patch(':id/status')
   @UseGuards(AuthGuard('jwt'))
   async toggleUserStatus(@Request() req, @Param('id') id: string, @Body('isActive') isActive: boolean) {
-    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
-      throw new BadRequestException('Accès refusé - Admin requis');
+    const userRole = req.user.role;
+    if (userRole !== UserRole.ADMIN && userRole !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException('Accès refusé - Admin requis');
+    }
+    if (typeof isActive !== 'boolean') {
+      throw new BadRequestException('isActive doit être un booléen');
     }
     return this.usersService.toggleUserStatus(id, isActive);
   }
@@ -395,9 +423,28 @@ export class UsersController {
   @Patch(':id/language')
   @UseGuards(AuthGuard('jwt'))
   async updateUserLanguage(@Request() req, @Param('id') id: string, @Body('language') language: string) {
-    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
-      throw new BadRequestException('Accès refusé - Admin requis');
+    const userRole = req.user.role;
+    if (userRole !== UserRole.ADMIN && userRole !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException('Accès refusé - Admin requis');
+    }
+    const validLanguages = ['fr', 'en', 'mg'];
+    if (!validLanguages.includes(language)) {
+      throw new BadRequestException(`Langue invalide. Options: ${validLanguages.join(', ')}`);
     }
     return this.usersService.update(id, { language });
+  }
+
+  @Patch(':id/role')
+  @UseGuards(AuthGuard('jwt'))
+  async updateUserRole(@Request() req, @Param('id') id: string, @Body('role') role: UserRole) {
+    const userRole = req.user.role;
+    if (userRole !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException('Seul un Super Admin peut modifier les rôles');
+    }
+    const validRoles = [UserRole.USER, UserRole.ADMIN, UserRole.SUPER_ADMIN];
+    if (!validRoles.includes(role)) {
+      throw new BadRequestException(`Rôle invalide. Options: ${validRoles.join(', ')}`);
+    }
+    return this.usersService.update(id, { role });
   }
 }

@@ -1,4 +1,4 @@
-// src/transactions/transactions.service.ts
+// backend/src/transactions/transactions.service.ts
 import {
   Injectable,
   NotFoundException,
@@ -10,9 +10,14 @@ import * as crypto from 'crypto';
 import {
   Transaction,
   TransactionDocument,
+  TransactionStatus,
+  TransactionType,
 } from './schemas/transaction.schema';
-import { User, UserDocument } from '../users/schemas/user.schema';
+import { User, UserDocument, UserRole } from '../users/schemas/user.schema';
 import { SendMoneyDto } from './dto/send-money.dto';
+
+// ✅ Commission pour transfert utilisateur → utilisateur : 5%
+const USER_TRANSFER_COMMISSION_RATE = 0.05;
 
 @Injectable()
 export class TransactionsService {
@@ -22,6 +27,9 @@ export class TransactionsService {
     @InjectModel(User.name) private userModel: Model<UserDocument>,
   ) {}
 
+  // ============================================================
+  // TRANSFERT UTILISATEUR → UTILISATEUR (5% commission Super Admin)
+  // ============================================================
   async sendMoney(userId: string, dto: SendMoneyDto) {
     if (userId === dto.receiverId) {
       throw new BadRequestException(
@@ -36,34 +44,80 @@ export class TransactionsService {
     if (!receiver) throw new NotFoundException('Destinataire non trouvé');
     if (!receiver.isActive)
       throw new BadRequestException('Le destinataire est inactif');
-    if (sender.balance < dto.amount)
-      throw new BadRequestException('Solde insuffisant');
+
+    // ✅ Récupérer le Super Admin
+    const superAdmin = await this.userModel.findOne({ role: UserRole.SUPER_ADMIN });
+    if (!superAdmin) {
+      throw new NotFoundException('Super Administrateur non trouvé');
+    }
+
+    // ✅ Calcul de la commission (5%)
+    const commission = dto.amount * USER_TRANSFER_COMMISSION_RATE;
+    const totalDeducted = dto.amount + commission;
+
+    if (sender.balance < totalDeducted) {
+      throw new BadRequestException(
+        `Solde insuffisant. ${totalDeducted} Ar requis dont ${commission} Ar de commission`,
+      );
+    }
+
+    // ✅ Déduire le montant + commission du sender
+    sender.balance -= totalDeducted;
+    await sender.save();
+
+    // ✅ Créditer le destinataire
+    receiver.balance += dto.amount;
+    await receiver.save();
+
+    // ✅ Créditer le Super Admin
+    superAdmin.balance += commission;
+    await superAdmin.save();
 
     const reference = `TXN-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
 
-    sender.balance -= dto.amount;
-    receiver.balance += dto.amount;
-    await sender.save();
-    await receiver.save();
-
+    // ✅ CRÉER LA TRANSACTION AVEC COMMISSION COMPLÈTE
     const tx = new this.txModel({
       senderId: new Types.ObjectId(userId),
       receiverId: new Types.ObjectId(dto.receiverId),
-      type: 'transfer',
+      type: TransactionType.TRANSFER,
       amount: dto.amount,
-      fee: 0,
-      totalAmount: dto.amount,
-      status: 'completed',
+      fee: commission,
+      commission: {
+        total: commission,
+        superAdminCommission: commission,
+        adminCommission: 0,
+        superAdminId: superAdmin._id,
+        adminId: null,
+        type: 'user_transfer',
+        rate: 5,
+        breakdown: `Super Admin: ${commission} Ar (5%)`,
+      },
+      totalAmount: totalDeducted,
+      status: TransactionStatus.COMPLETED,
       description:
         dto.description || `Transfert vers ${receiver.firstName} ${receiver.lastName}`,
       reference,
       paymentMethod: 'wallet',
+      // ✅ AJOUTER LES MÉTADATA POUR LA RECHERCHE
+      metadata: {
+        hasCommission: true,
+        commissionAmount: commission,
+        commissionRate: 5,
+        commissionType: 'user_transfer',
+      },
     });
     await tx.save();
+
+    // ✅ LOG POUR VÉRIFIER
+    console.log(`💰 Transaction créée avec commission: ${commission} Ar`);
+    console.log(`📋 Transaction:`, JSON.stringify(tx.commission, null, 2));
 
     return this.toTransactionResponse(tx, userId);
   }
 
+  // ============================================================
+  // MOBILE MONEY
+  // ============================================================
   async mobileMoneyTransfer(
     userId: string,
     operator: string,
@@ -101,11 +155,11 @@ export class TransactionsService {
 
     const tx = new this.txModel({
       senderId: new Types.ObjectId(userId),
-      type: 'mobile_money',
+      type: TransactionType.MOBILE_MONEY,
       amount,
       fee,
       totalAmount,
-      status: 'completed',
+      status: TransactionStatus.COMPLETED,
       description: `Transfert Mobile Money ${operator.toUpperCase()} → ${cleanPhoneNumber}`,
       reference,
       mobileMoneyOperator: operator,
@@ -129,6 +183,9 @@ export class TransactionsService {
     return Math.ceil(fee < MINIMUM_FEE ? MINIMUM_FEE : fee);
   }
 
+  // ============================================================
+  // SCAN & PAY
+  // ============================================================
   async scanAndPay(
     userId: string,
     receiverQrCode: string,
@@ -157,11 +214,11 @@ export class TransactionsService {
     const tx = new this.txModel({
       senderId: new Types.ObjectId(userId),
       receiverId: receiver._id,
-      type: 'payment',
+      type: TransactionType.PAYMENT,
       amount,
       fee: 0,
       totalAmount: amount,
-      status: 'completed',
+      status: TransactionStatus.COMPLETED,
       description: description || `Paiement QR à ${receiver.firstName} ${receiver.lastName}`,
       reference,
       paymentMethod: 'wallet',
@@ -171,6 +228,9 @@ export class TransactionsService {
     return this.toTransactionResponse(tx, userId);
   }
 
+  // ============================================================
+  // RÉCUPÉRATION DES TRANSACTIONS
+  // ============================================================
   async getUserTransactions(userId: string) {
     const uid = new Types.ObjectId(userId);
     const txs = await this.txModel
@@ -182,6 +242,9 @@ export class TransactionsService {
     return txs.map((t) => this.toTransactionResponse(t, userId));
   }
 
+  // ============================================================
+  // STATISTIQUES TABLEAU DE BORD UTILISATEUR
+  // ============================================================
   async getDashboardStats(userId: string) {
     const uid = new Types.ObjectId(userId);
     const user = await this.userModel.findById(uid).select('balance');
@@ -220,6 +283,9 @@ export class TransactionsService {
     };
   }
 
+  // ============================================================
+  // HELPERS PRIVÉS
+  // ============================================================
   private toTransactionResponse(tx: any, viewerUserId: string) {
     const senderObj = tx.senderId && typeof tx.senderId === 'object' && tx.senderId.email
       ? tx.senderId
@@ -235,6 +301,7 @@ export class TransactionsService {
       type: tx.type,
       amount: tx.amount,
       fee: tx.fee,
+      commission: tx.commission || null,
       totalAmount: tx.totalAmount,
       status: tx.status,
       description: tx.description,

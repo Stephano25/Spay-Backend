@@ -26,22 +26,40 @@ export class AdminController {
   constructor(private readonly adminService: AdminService) {}
 
   // ============================================================
+  // ✅ HELPER : extraction robuste de l'ID utilisateur depuis le JWT
+  // ============================================================
+  private extractUserId(req: any): string {
+    const userId =
+      req.user?.id ||
+      req.user?._id?.toString?.() ||
+      req.user?.sub ||
+      req.user?.userId ||
+      null;
+
+    if (!userId) {
+      console.warn('⚠️ Impossible d\'extraire userId depuis req.user:', req.user);
+    }
+
+    return userId;
+  }
+
+  // ============================================================
   // TABLEAU DE BORD ADMIN
   // ============================================================
 
   @Get('dashboard/stats')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async getDashboardStats(@Request() req) {
-    const userId = req.user.id;
-    const userRole = req.user.role;
+    const userId = this.extractUserId(req);
+    const userRole = req.user?.role;
     return this.adminService.getDashboardStats(userId, userRole);
   }
 
   @Get('dashboard/commissions')
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
   async getCommissionStats(@Request() req) {
-    const userId = req.user.id;
-    const userRole = req.user.role;
+    const userId = this.extractUserId(req);
+    const userRole = req.user?.role;
     return this.adminService.getCommissionStats(userId, userRole);
   }
 
@@ -68,7 +86,7 @@ export class AdminController {
     @Body('type') type: 'deposit' | 'withdraw',
     @Body('amount') amount?: number,
   ) {
-    const adminId = req.user.id;
+    const adminId = this.extractUserId(req);
     return this.adminService.generateQRCode(adminId, type, amount);
   }
 
@@ -78,7 +96,7 @@ export class AdminController {
     @Request() req,
     @Body('qrData') qrData: string,
   ) {
-    const adminId = req.user.id;
+    const adminId = this.extractUserId(req);
     return this.adminService.scanQRCode(adminId, qrData);
   }
 
@@ -187,7 +205,7 @@ export class AdminController {
     @Request() req,
     @Body('qrCode') qrCode?: string,
   ) {
-    const adminId = req.user.id;
+    const adminId = this.extractUserId(req);
     return this.adminService.depositMoney(adminId, userId, amount, description, qrCode);
   }
 
@@ -200,7 +218,7 @@ export class AdminController {
     @Request() req,
     @Body('qrCode') qrCode?: string,
   ) {
-    const adminId = req.user.id;
+    const adminId = this.extractUserId(req);
     return this.adminService.withdrawMoney(adminId, userId, amount, description, qrCode);
   }
 
@@ -260,7 +278,7 @@ export class AdminController {
   @Delete('admins/:id')
   @Roles(UserRole.SUPER_ADMIN)
   async removeAdmin(@Param('id') id: string, @Request() req) {
-    const currentUserId = req.user.id;
+    const currentUserId = this.extractUserId(req);
     if (id === currentUserId) {
       throw new BadRequestException('Vous ne pouvez pas vous supprimer vous-même');
     }

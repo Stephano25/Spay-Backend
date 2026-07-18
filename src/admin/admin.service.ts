@@ -17,15 +17,32 @@ import {
   Transaction,
   TransactionDocument,
   TransactionStatus,
+  TransactionType,
 } from '../transactions/schemas/transaction.schema';
 import { Setting, SettingDocument } from '../settings/schemas/setting.schema';
 import { Log, LogDocument } from '../logs/schemas/log.schema';
 import { ChatGateway } from '../chat/chat.gateway';
 import { I18nService, Language } from '../i18n/i18n.service';
 
-@Injectable() // ✅ AJOUTÉ
+// ============================================================
+// CONSTANTES DE COMMISSION
+// ============================================================
+const COMMISSION_RATES = {
+  ADMIN_WITHDRAWAL: {
+    SUPER_ADMIN: 0.04,
+    ADMIN: 0.03,
+  },
+  USER_TRANSFER: {
+    SUPER_ADMIN: 0.05,
+  },
+  USER_DEPOSIT: {
+    SUPER_ADMIN: 0,
+  },
+};
+
+@Injectable()
 export class AdminService {
-  private readonly logger = new Logger(AdminService.name); // ✅ AJOUTÉ
+  private readonly logger = new Logger(AdminService.name);
 
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
@@ -41,13 +58,16 @@ export class AdminService {
   // ============================================================
   async getDashboardStats(userId: string, userRole: string) {
     try {
-      this.logger.log(`📊 getDashboardStats pour ${userRole} ${userId}`); // ✅ AJOUTÉ
+      this.logger.log(`📊 getDashboardStats pour ${userRole} ${userId}`);
 
-      if (!Types.ObjectId.isValid(userId)) {
-        this.logger.warn('⚠️ ID utilisateur invalide pour getDashboardStats');
-        return this.getEmptyDashboardStats(userRole);
+      const isValidAdminId = Types.ObjectId.isValid(userId);
+      if (!isValidAdminId) {
+        this.logger.warn(
+          `⚠️ userId invalide reçu ("${userId}") — les stats globales seront quand même calculées`,
+        );
       }
 
+      // ✅ Stats globales
       const [totalUsers, totalTransactions] = await Promise.all([
         this.userModel.countDocuments(),
         this.transactionModel.countDocuments(),
@@ -85,10 +105,159 @@ export class AdminService {
       let adminTransactions = 0;
       let adminVolume = 0;
 
-      if (userRole === 'super_admin') {
-        totalAdmins = await this.userModel.countDocuments({ role: 'admin' });
-        totalSuperAdmins = await this.userModel.countDocuments({ role: 'super_admin' });
+      // ============================================================
+      // COMMISSIONS - STATISTIQUES COMPLÈTES AVEC RECHERCHE ÉLARGIE
+      // ============================================================
+      let totalSuperAdminCommission = 0;
+      let totalAdminCommission = 0;
+      let totalCommissionTransactions = 0;
+      let recentCommissions: any[] = [];
+      let adminCommissions: any[] = [];
+      let myCommission = 0;
+      let myCommissionTransactions = 0;
 
+      if (userRole === UserRole.SUPER_ADMIN) {
+        totalAdmins = await this.userModel.countDocuments({ role: UserRole.ADMIN });
+        totalSuperAdmins = await this.userModel.countDocuments({ role: UserRole.SUPER_ADMIN });
+
+        // ✅ RECHERCHE ÉLARGIE DES COMMISSIONS
+        // 1. Transactions avec commission.total > 0
+        // 2. Transactions avec commission.superAdminCommission > 0
+        // 3. Transactions avec metadata.hasCommission = true
+        // 4. Transactions de type transfer (qui devraient avoir une commission)
+        const allCommissionTransactions = await this.transactionModel
+          .find({
+            status: TransactionStatus.COMPLETED,
+            $or: [
+              { 'commission.total': { $gt: 0 } },
+              { 'commission.superAdminCommission': { $gt: 0 } },
+              { 'metadata.hasCommission': true },
+              { type: TransactionType.TRANSFER },
+            ],
+          })
+          .sort({ createdAt: -1 })
+          .populate('senderId', 'firstName lastName email language')
+          .populate('receiverId', 'firstName lastName email language')
+          .populate('commission.adminId', 'firstName lastName email')
+          .populate('commission.superAdminId', 'firstName lastName email')
+          .lean();
+
+        this.logger.log(`💰 Transactions avec commission trouvées: ${allCommissionTransactions.length}`);
+
+        // ✅ Si aucune transaction trouvée, récupérer toutes les transactions et filtrer
+        let finalTransactions = allCommissionTransactions;
+        if (allCommissionTransactions.length === 0) {
+          this.logger.log('💰 Aucune transaction avec commission trouvée, recherche élargie...');
+          const allTx = await this.transactionModel
+            .find({
+              status: TransactionStatus.COMPLETED,
+            })
+            .sort({ createdAt: -1 })
+            .populate('senderId', 'firstName lastName email language')
+            .populate('receiverId', 'firstName lastName email language')
+            .lean();
+
+          // Filtrer manuellement
+          const txWithCommission = allTx.filter(tx => {
+            // Vérifier si la transaction a une commission
+            if (tx.commission) {
+              return tx.commission.total > 0 || 
+                     tx.commission.superAdminCommission > 0 || 
+                     tx.commission.adminCommission > 0;
+            }
+            // Vérifier si c'est un transfert (devrait avoir une commission)
+            if (tx.type === TransactionType.TRANSFER) {
+              return true;
+            }
+            return false;
+          });
+
+          this.logger.log(`💰 Transactions avec commission (filtrage manuel): ${txWithCommission.length}`);
+          finalTransactions = txWithCommission;
+        }
+
+        totalCommissionTransactions = finalTransactions.length;
+
+        // ✅ Calculer les totaux
+        finalTransactions.forEach((tx: any) => {
+          if (tx.commission) {
+            totalSuperAdminCommission += tx.commission.superAdminCommission || 0;
+            totalAdminCommission += tx.commission.adminCommission || 0;
+          } else if (tx.type === TransactionType.TRANSFER) {
+            // ✅ Si c'est un transfert sans commission explicite, calculer la commission
+            const commission = tx.amount * 0.05;
+            totalSuperAdminCommission += commission;
+            // Ajouter la commission à l'objet pour les logs
+            tx.commission = {
+              total: commission,
+              superAdminCommission: commission,
+              adminCommission: 0,
+              type: 'user_transfer',
+              rate: 5,
+              breakdown: `Super Admin: ${commission} Ar (5%)`,
+            };
+          }
+        });
+
+        this.logger.log(`💰 totalSuperAdminCommission: ${totalSuperAdminCommission}`);
+        this.logger.log(`💰 totalAdminCommission: ${totalAdminCommission}`);
+
+        // ✅ Regrouper les commissions par Admin
+        const adminMap = new Map<string, any>();
+        finalTransactions.forEach((tx: any) => {
+          const adminId = tx.commission?.adminId?._id?.toString();
+          if (adminId && tx.commission && tx.commission.adminCommission > 0) {
+            if (!adminMap.has(adminId)) {
+              adminMap.set(adminId, {
+                adminId: adminId,
+                adminName: tx.commission.adminId
+                  ? `${tx.commission.adminId.firstName} ${tx.commission.adminId.lastName}`
+                  : 'Admin inconnu',
+                totalCommission: 0,
+                transactionCount: 0,
+                commissions: [],
+              });
+            }
+            const entry = adminMap.get(adminId);
+            entry.totalCommission += tx.commission.adminCommission;
+            entry.transactionCount += 1;
+            entry.commissions.push({
+              id: tx._id.toString(),
+              amount: tx.commission.adminCommission,
+              transactionAmount: tx.amount,
+              sourceType: tx.commission.type || 'user_transfer',
+              createdAt: tx.createdAt,
+              userId: tx.senderId?._id?.toString(),
+              userName: tx.senderId
+                ? `${tx.senderId.firstName} ${tx.senderId.lastName}`
+                : 'Utilisateur',
+            });
+          }
+        });
+        adminCommissions = Array.from(adminMap.values());
+        this.logger.log(`📋 adminCommissions: ${adminCommissions.length}`);
+
+        // ✅ Dernières commissions
+        recentCommissions = finalTransactions.slice(0, 10).map((tx: any) => ({
+          id: tx._id.toString(),
+          amount: tx.commission?.total || tx.amount * 0.05 || 0,
+          superAdminAmount: tx.commission?.superAdminCommission || tx.amount * 0.05 || 0,
+          adminAmount: tx.commission?.adminCommission || 0,
+          transactionAmount: tx.amount,
+          sourceType: tx.commission?.type || 'user_transfer',
+          sourceUserId: tx.senderId?._id?.toString(),
+          userName: tx.senderId
+            ? `${tx.senderId.firstName} ${tx.senderId.lastName}`
+            : 'Utilisateur',
+          adminName: tx.commission?.adminId
+            ? `${tx.commission.adminId.firstName} ${tx.commission.adminId.lastName}`
+            : 'Admin inconnu',
+          createdAt: tx.createdAt,
+          rate: tx.commission?.rate || 5,
+        }));
+        this.logger.log(`📋 recentCommissions: ${recentCommissions.length}`);
+
+        // ✅ Transactions admin
         const adminTxResult = await this.transactionModel.aggregate([
           {
             $match: {
@@ -102,24 +271,57 @@ export class AdminService {
         adminTransactions = await this.transactionModel.countDocuments({
           'metadata.adminAction': true,
         });
-      }
 
-      let myAdminTransactions = 0;
-      let myAdminVolume = 0;
-      if (userRole === 'admin' && Types.ObjectId.isValid(userId)) {
-        const myTxResult = await this.transactionModel.aggregate([
-          {
-            $match: {
+        // ✅ Commission du Super Admin lui-même
+        if (isValidAdminId) {
+          const myAdminTx = await this.transactionModel
+            .find({
               status: TransactionStatus.COMPLETED,
               'metadata.adminId': new Types.ObjectId(userId),
-            },
-          },
-          { $group: { _id: null, total: { $sum: '$amount' } } },
-        ]);
-        myAdminVolume = myTxResult[0]?.total || 0;
-        myAdminTransactions = await this.transactionModel.countDocuments({
-          'metadata.adminId': new Types.ObjectId(userId),
-        });
+            })
+            .lean();
+
+          myCommissionTransactions = myAdminTx.length;
+          myCommission = myAdminTx.reduce((sum, tx) => {
+            return sum + (tx.commission?.superAdminCommission || 0);
+          }, 0);
+        }
+      }
+
+      // ============================================================
+      // ADMIN NORMAL
+      // ============================================================
+      if (userRole === UserRole.ADMIN && isValidAdminId) {
+        const myTx = await this.transactionModel
+          .find({
+            status: TransactionStatus.COMPLETED,
+            'metadata.adminId': new Types.ObjectId(userId),
+          })
+          .sort({ createdAt: -1 })
+          .populate('senderId', 'firstName lastName email language')
+          .populate('receiverId', 'firstName lastName email language')
+          .lean();
+
+        myCommissionTransactions = myTx.length;
+        myCommission = myTx.reduce((sum, tx) => {
+          return sum + (tx.commission?.adminCommission || 0);
+        }, 0);
+
+        recentCommissions = myTx.slice(0, 10).map((tx: any) => ({
+          id: tx._id.toString(),
+          amount: tx.commission?.adminCommission || 0,
+          transactionAmount: tx.amount,
+          sourceType: tx.commission?.type || 'admin_withdrawal',
+          sourceUserId: tx.senderId?._id?.toString(),
+          userName: tx.senderId
+            ? `${tx.senderId.firstName} ${tx.senderId.lastName}`
+            : 'Utilisateur',
+          createdAt: tx.createdAt,
+          rate: tx.commission?.rate || 0,
+        }));
+
+        totalAdminCommission = myCommission;
+        totalCommissionTransactions = myCommissionTransactions;
       }
 
       return {
@@ -165,9 +367,17 @@ export class AdminService {
         totalSuperAdmins,
         adminTransactions,
         adminVolume,
-        myAdminTransactions,
-        myAdminVolume,
+        myAdminTransactions: userRole === UserRole.ADMIN ? myCommissionTransactions : 0,
+        myAdminVolume: 0,
         userRole,
+        totalSuperAdminCommission,
+        totalAdminCommission,
+        totalCommissionTransactions,
+        recentCommissions,
+        adminCommissions,
+        myCommission,
+        myCommissionTransactions,
+        commissionRate: 0.5,
       };
     } catch (error) {
       this.logger.error('❌ Erreur getDashboardStats:', error);
@@ -192,6 +402,14 @@ export class AdminService {
       myAdminTransactions: 0,
       myAdminVolume: 0,
       userRole,
+      totalSuperAdminCommission: 0,
+      totalAdminCommission: 0,
+      totalCommissionTransactions: 0,
+      recentCommissions: [],
+      adminCommissions: [],
+      myCommission: 0,
+      myCommissionTransactions: 0,
+      commissionRate: 0.5,
     };
   }
 
@@ -202,62 +420,117 @@ export class AdminService {
     try {
       this.logger.log(`💰 getCommissionStats pour ${userRole} ${userId}`);
 
-      const commissionRate = 0.5;
-      let totalCommission = 0;
-      let commissionTransactions = 0;
-      let recentCommissions = [];
+      let totalSuperAdminCommission = 0;
+      let totalAdminCommission = 0;
+      let totalCommissionTransactions = 0;
+      let recentCommissions: any[] = [];
+      let adminCommissions: any[] = [];
       let myCommission = 0;
       let myCommissionTransactions = 0;
 
       const isValidId = Types.ObjectId.isValid(userId);
+      if (!isValidId) {
+        this.logger.warn(`⚠️ userId invalide dans getCommissionStats: "${userId}"`);
+      }
 
-      if (userRole === 'super_admin') {
-        const allAdminTx = await this.transactionModel
+      if (userRole === UserRole.SUPER_ADMIN) {
+        // ✅ RECHERCHE ÉLARGIE
+        const allTx = await this.transactionModel
           .find({
             status: TransactionStatus.COMPLETED,
-            'metadata.adminAction': true,
+            $or: [
+              { 'commission.total': { $gt: 0 } },
+              { 'commission.superAdminCommission': { $gt: 0 } },
+              { 'metadata.hasCommission': true },
+              { type: TransactionType.TRANSFER },
+            ],
           })
           .sort({ createdAt: -1 })
           .populate('senderId', 'firstName lastName email language')
           .populate('receiverId', 'firstName lastName email language')
+          .populate('commission.adminId', 'firstName lastName email')
+          .populate('commission.superAdminId', 'firstName lastName email')
           .lean();
 
-        commissionTransactions = allAdminTx.length;
-        totalCommission = allAdminTx.reduce((sum, tx) => {
-          return sum + (tx.amount * commissionRate) / 100;
-        }, 0);
+        totalCommissionTransactions = allTx.length;
 
-        recentCommissions = allAdminTx.slice(0, 5).map((tx: any) => {
-          return {
-            id: tx._id.toString(),
-            adminName: 'Admin',
-            userName: tx.receiverId
-              ? `${(tx.receiverId as any)?.firstName || ''} ${(tx.receiverId as any)?.lastName || ''}`.trim()
-              : tx.senderId
-                ? `${(tx.senderId as any)?.firstName || ''} ${(tx.senderId as any)?.lastName || ''}`.trim()
-                : 'Utilisateur',
-            amount: tx.amount,
-            commission: (tx.amount * commissionRate) / 100,
-            createdAt: tx.createdAt,
-            type: tx.type,
-            language: (tx.receiverId as any)?.language || 'fr',
-          };
+        allTx.forEach((tx: any) => {
+          if (tx.commission) {
+            totalSuperAdminCommission += tx.commission.superAdminCommission || 0;
+            totalAdminCommission += tx.commission.adminCommission || 0;
+          } else if (tx.type === TransactionType.TRANSFER) {
+            const commission = tx.amount * 0.05;
+            totalSuperAdminCommission += commission;
+          }
         });
 
+        const adminMap = new Map<string, any>();
+        allTx.forEach((tx: any) => {
+          const adminId = tx.commission?.adminId?._id?.toString();
+          if (adminId && tx.commission && tx.commission.adminCommission > 0) {
+            if (!adminMap.has(adminId)) {
+              adminMap.set(adminId, {
+                adminId: adminId,
+                adminName: tx.commission.adminId
+                  ? `${tx.commission.adminId.firstName} ${tx.commission.adminId.lastName}`
+                  : 'Admin inconnu',
+                totalCommission: 0,
+                transactionCount: 0,
+                commissions: [],
+              });
+            }
+            const entry = adminMap.get(adminId);
+            entry.totalCommission += tx.commission.adminCommission;
+            entry.transactionCount += 1;
+            entry.commissions.push({
+              id: tx._id.toString(),
+              amount: tx.commission.adminCommission,
+              transactionAmount: tx.amount,
+              sourceType: tx.commission.type || 'user_transfer',
+              createdAt: tx.createdAt,
+              userId: tx.senderId?._id?.toString(),
+              userName: tx.senderId
+                ? `${tx.senderId.firstName} ${tx.senderId.lastName}`
+                : 'Utilisateur',
+            });
+          }
+        });
+        adminCommissions = Array.from(adminMap.values());
+
+        recentCommissions = allTx.slice(0, 10).map((tx: any) => ({
+          id: tx._id.toString(),
+          amount: tx.commission?.total || tx.amount * 0.05 || 0,
+          superAdminAmount: tx.commission?.superAdminCommission || tx.amount * 0.05 || 0,
+          adminAmount: tx.commission?.adminCommission || 0,
+          transactionAmount: tx.amount,
+          sourceType: tx.commission?.type || 'user_transfer',
+          sourceUserId: tx.senderId?._id?.toString(),
+          userName: tx.senderId
+            ? `${tx.senderId.firstName} ${tx.senderId.lastName}`
+            : 'Utilisateur',
+          adminName: tx.commission?.adminId
+            ? `${tx.commission.adminId.firstName} ${tx.commission.adminId.lastName}`
+            : 'Admin inconnu',
+          createdAt: tx.createdAt,
+          rate: tx.commission?.rate || 5,
+        }));
+
         if (isValidId) {
-          const myAdminTx = await this.transactionModel
+          const myTx = await this.transactionModel
             .find({
               status: TransactionStatus.COMPLETED,
               'metadata.adminId': new Types.ObjectId(userId),
             })
             .lean();
 
-          myCommissionTransactions = myAdminTx.length;
-          myCommission = myAdminTx.reduce((sum, tx) => {
-            return sum + (tx.amount * commissionRate) / 100;
+          myCommissionTransactions = myTx.length;
+          myCommission = myTx.reduce((sum, tx) => {
+            return sum + (tx.commission?.superAdminCommission || 0);
           }, 0);
         }
-      } else if (userRole === 'admin' && isValidId) {
+      }
+
+      if (userRole === UserRole.ADMIN && isValidId) {
         const myTx = await this.transactionModel
           .find({
             status: TransactionStatus.COMPLETED,
@@ -270,55 +543,326 @@ export class AdminService {
 
         myCommissionTransactions = myTx.length;
         myCommission = myTx.reduce((sum, tx) => {
-          return sum + (tx.amount * commissionRate) / 100;
+          return sum + (tx.commission?.adminCommission || 0);
         }, 0);
 
-        recentCommissions = myTx.slice(0, 5).map((tx: any) => ({
+        recentCommissions = myTx.slice(0, 10).map((tx: any) => ({
           id: tx._id.toString(),
-          adminName: 'Moi',
-          userName: tx.receiverId
-            ? `${(tx.receiverId as any)?.firstName || ''} ${(tx.receiverId as any)?.lastName || ''}`.trim()
-            : tx.senderId
-              ? `${(tx.senderId as any)?.firstName || ''} ${(tx.senderId as any)?.lastName || ''}`.trim()
-              : 'Utilisateur',
-          amount: tx.amount,
-          commission: (tx.amount * commissionRate) / 100,
+          amount: tx.commission?.adminCommission || 0,
+          transactionAmount: tx.amount,
+          sourceType: tx.commission?.type || 'admin_withdrawal',
+          sourceUserId: tx.senderId?._id?.toString(),
+          userName: tx.senderId
+            ? `${tx.senderId.firstName} ${tx.senderId.lastName}`
+            : 'Utilisateur',
           createdAt: tx.createdAt,
-          type: tx.type,
-          language: (tx.receiverId as any)?.language || 'fr',
+          rate: tx.commission?.rate || 0,
         }));
 
-        totalCommission = myCommission;
-        commissionTransactions = myCommissionTransactions;
+        totalAdminCommission = myCommission;
+        totalCommissionTransactions = myCommissionTransactions;
       }
 
       return {
-        totalCommission: Math.round(totalCommission * 100) / 100,
-        commissionTransactions,
-        commissionRate,
+        totalSuperAdminCommission: Math.round(totalSuperAdminCommission * 100) / 100,
+        totalAdminCommission: Math.round(totalAdminCommission * 100) / 100,
+        totalCommissionTransactions,
         recentCommissions,
+        adminCommissions,
         myCommission: Math.round(myCommission * 100) / 100,
         myCommissionTransactions,
+        commissionRate: 0.5,
         userRole,
       };
     } catch (error) {
       this.logger.error('❌ Erreur getCommissionStats:', error);
       return {
-        totalCommission: 0,
-        commissionTransactions: 0,
-        commissionRate: 0.5,
+        totalSuperAdminCommission: 0,
+        totalAdminCommission: 0,
+        totalCommissionTransactions: 0,
         recentCommissions: [],
+        adminCommissions: [],
         myCommission: 0,
         myCommissionTransactions: 0,
+        commissionRate: 0.5,
         userRole,
       };
     }
   }
 
   // ============================================================
+  // ADMIN ACTIONS - DÉPÔT ET RETRAIT
+  // ============================================================
+  async depositMoney(
+    adminId: string,
+    userId: string,
+    amount: number,
+    description?: string,
+    qrCode?: string,
+  ) {
+    try {
+      this.logger.log(`📝 DEPOSIT - adminId: ${adminId}, userId: ${userId}, amount: ${amount}`);
+
+      if (!Types.ObjectId.isValid(adminId)) {
+        this.logger.error(`❌ adminId invalide: ${adminId}`);
+        throw new BadRequestException('Session administrateur invalide, veuillez vous reconnecter');
+      }
+
+      if (!Types.ObjectId.isValid(userId)) {
+        this.logger.error(`❌ userId invalide: ${userId}`);
+        throw new NotFoundException('ID utilisateur invalide');
+      }
+
+      if (amount <= 0) {
+        throw new BadRequestException('Le montant doit être supérieur à 0');
+      }
+
+      const admin = await this.userModel.findById(adminId);
+      if (!admin) {
+        this.logger.error(`❌ Admin non trouvé: ${adminId}`);
+        throw new NotFoundException('Administrateur non trouvé');
+      }
+      this.logger.log(`✅ Admin trouvé: ${admin.email} (${admin.role})`);
+
+      if (admin.role !== UserRole.ADMIN && admin.role !== UserRole.SUPER_ADMIN) {
+        this.logger.error(`❌ L'utilisateur ${adminId} n'est pas admin (rôle: ${admin.role})`);
+        throw new BadRequestException('Seul un administrateur peut effectuer cette action');
+      }
+
+      const user = await this.userModel.findById(userId);
+      if (!user) {
+        this.logger.error(`❌ Utilisateur cible non trouvé: ${userId}`);
+        throw new NotFoundException('Utilisateur non trouvé');
+      }
+      this.logger.log(`✅ Utilisateur cible trouvé: ${user.email} (balance actuelle: ${user.balance})`);
+
+      if (qrCode) {
+        const isValid = await this.validateQRCode(qrCode, 'deposit');
+        if (!isValid) {
+          throw new BadRequestException('QR Code invalide ou expiré');
+        }
+      }
+
+      user.balance += amount;
+      await user.save();
+      this.logger.log(`💰 Nouveau solde de ${user.email}: ${user.balance}`);
+
+      const transaction = await this.transactionModel.create({
+        senderId: null,
+        receiverId: user._id,
+        type: TransactionType.DEPOSIT,
+        amount: amount,
+        fee: 0,
+        commission: {
+          total: 0,
+          superAdminCommission: 0,
+          adminCommission: 0,
+          type: 'user_deposit',
+          rate: 0,
+          breakdown: 'Dépôt utilisateur - 0% commission',
+        },
+        totalAmount: amount,
+        status: TransactionStatus.COMPLETED,
+        description: description || `Dépôt administrateur`,
+        reference: `ADMIN-DEP-${Date.now()}`,
+        paymentMethod: qrCode ? 'qr_code' : 'admin',
+        metadata: {
+          adminAction: true,
+          adminId: new Types.ObjectId(adminId),
+          qrCode: qrCode || null,
+          commission: 0,
+          commissionRate: 0,
+          adminEmail: admin.email,
+        },
+      });
+      this.logger.log(`📋 Transaction créée: ${transaction._id}`);
+
+      await this.logModel.create({
+        level: 'info',
+        message: `Dépôt de ${amount} Ar effectué sur le compte de ${user.email} par admin ${admin.email}`,
+        userId: userId,
+        date: new Date(),
+        metadata: { amount, description, qrCode, adminId: admin.email },
+      });
+
+      const userLang = (user.language || 'fr') as Language;
+      const depositMessage = this.i18nService.translate(userLang, 'deposit.success', { amount });
+
+      this.chatGateway?.notifyUser(userId, 'balanceUpdate', {
+        newBalance: user.balance,
+        amount,
+        type: 'deposit',
+        message: depositMessage,
+        title: this.i18nService.translate(userLang, 'notification.deposit'),
+      });
+
+      return {
+        success: true,
+        message: depositMessage,
+        newBalance: user.balance,
+        commission: 0,
+        transaction: this.toTransactionResponse(transaction),
+      };
+    } catch (error) {
+      this.logger.error('❌ Erreur depositMoney:', error);
+      throw error;
+    }
+  }
+
+  async withdrawMoney(
+    adminId: string,
+    userId: string,
+    amount: number,
+    description?: string,
+    qrCode?: string,
+  ) {
+    try {
+      this.logger.log(`📝 WITHDRAW - adminId: ${adminId}, userId: ${userId}, amount: ${amount}`);
+
+      if (!Types.ObjectId.isValid(adminId)) {
+        this.logger.error(`❌ adminId invalide: ${adminId}`);
+        throw new BadRequestException('Session administrateur invalide, veuillez vous reconnecter');
+      }
+
+      if (!Types.ObjectId.isValid(userId)) {
+        this.logger.error(`❌ userId invalide: ${userId}`);
+        throw new NotFoundException('ID utilisateur invalide');
+      }
+
+      if (amount <= 0) {
+        throw new BadRequestException('Le montant doit être supérieur à 0');
+      }
+
+      const admin = await this.userModel.findById(adminId);
+      if (!admin) {
+        this.logger.error(`❌ Admin non trouvé: ${adminId}`);
+        throw new NotFoundException('Administrateur non trouvé');
+      }
+      this.logger.log(`✅ Admin trouvé: ${admin.email} (${admin.role})`);
+
+      const user = await this.userModel.findById(userId);
+      if (!user) {
+        this.logger.error(`❌ Utilisateur cible non trouvé: ${userId}`);
+        throw new NotFoundException('Utilisateur non trouvé');
+      }
+      this.logger.log(`✅ Utilisateur cible trouvé: ${user.email} (balance: ${user.balance})`);
+
+      const superAdmin = await this.userModel.findOne({ role: UserRole.SUPER_ADMIN });
+      if (!superAdmin) {
+        throw new NotFoundException('Super Administrateur non trouvé');
+      }
+      this.logger.log(`✅ Super Admin trouvé: ${superAdmin.email}`);
+
+      const superAdminCommission = amount * COMMISSION_RATES.ADMIN_WITHDRAWAL.SUPER_ADMIN;
+      const adminCommission = amount * COMMISSION_RATES.ADMIN_WITHDRAWAL.ADMIN;
+      const totalCommission = superAdminCommission + adminCommission;
+      const totalDeducted = amount + totalCommission;
+      this.logger.log(`💰 Commissions: SuperAdmin=${superAdminCommission}, Admin=${adminCommission}, Total=${totalCommission}`);
+
+      if (user.balance < totalDeducted) {
+        const userLang = (user.language || 'fr') as Language;
+        throw new BadRequestException(
+          this.i18nService.translate(userLang, 'error.insufficient_balance') +
+          ` (${totalDeducted} Ar requis dont ${totalCommission} Ar de commissions)`,
+        );
+      }
+
+      if (qrCode) {
+        const isValid = await this.validateQRCode(qrCode, 'withdraw');
+        if (!isValid) {
+          throw new BadRequestException('QR Code invalide ou expiré');
+        }
+      }
+
+      user.balance -= totalDeducted;
+      await user.save();
+      this.logger.log(`💰 Nouveau solde de ${user.email}: ${user.balance}`);
+
+      superAdmin.balance += superAdminCommission;
+      await superAdmin.save();
+      this.logger.log(`💰 Super Admin ${superAdmin.email} reçoit ${superAdminCommission} Ar`);
+
+      const adminUser = await this.userModel.findById(adminId);
+      if (adminUser) {
+        adminUser.balance += adminCommission;
+        await adminUser.save();
+        this.logger.log(`💰 Admin ${adminUser.email} reçoit ${adminCommission} Ar`);
+      }
+
+      const transaction = await this.transactionModel.create({
+        senderId: user._id,
+        receiverId: null,
+        type: TransactionType.WITHDRAWAL,
+        amount: amount,
+        fee: totalCommission,
+        commission: {
+          total: totalCommission,
+          superAdminCommission: superAdminCommission,
+          adminCommission: adminCommission,
+          superAdminId: superAdmin._id,
+          adminId: new Types.ObjectId(adminId),
+          type: 'admin_withdrawal',
+          rate: 4,
+          breakdown: `Super Admin: ${superAdminCommission} Ar (4%) + Admin: ${adminCommission} Ar (3%)`,
+        },
+        totalAmount: totalDeducted,
+        status: TransactionStatus.COMPLETED,
+        description: description || `Retrait administrateur`,
+        reference: `ADMIN-WTH-${Date.now()}`,
+        paymentMethod: qrCode ? 'qr_code' : 'admin',
+        metadata: {
+          adminAction: true,
+          adminId: new Types.ObjectId(adminId),
+          qrCode: qrCode || null,
+          superAdminCommission: superAdminCommission,
+          adminCommission: adminCommission,
+          totalCommission: totalCommission,
+          commissionRate: 4,
+          adminEmail: admin.email,
+          superAdminEmail: superAdmin.email,
+        },
+      });
+      this.logger.log(`📋 Transaction créée: ${transaction._id}`);
+
+      await this.logModel.create({
+        level: 'info',
+        message: `Retrait de ${amount} Ar effectué sur le compte de ${user.email} par admin ${admin.email} (commissions: Super Admin=${superAdminCommission} Ar, Admin=${adminCommission} Ar)`,
+        userId: userId,
+        date: new Date(),
+        metadata: { amount, description, qrCode, adminId: admin.email, superAdminCommission, adminCommission },
+      });
+
+      const userLang = (user.language || 'fr') as Language;
+      const withdrawalMessage = this.i18nService.translate(userLang, 'withdrawal.success', { amount });
+      const commissionMessage = `Commissions: ${totalCommission} Ar`;
+
+      this.chatGateway?.notifyUser(userId, 'balanceUpdate', {
+        newBalance: user.balance,
+        amount: totalDeducted,
+        type: 'withdrawal',
+        message: withdrawalMessage,
+        commissionMessage: commissionMessage,
+        title: this.i18nService.translate(userLang, 'notification.withdrawal'),
+      });
+
+      return {
+        success: true,
+        message: `${withdrawalMessage} (${commissionMessage})`,
+        newBalance: user.balance,
+        commission: totalCommission,
+        superAdminCommission: superAdminCommission,
+        adminCommission: adminCommission,
+        transaction: this.toTransactionResponse(transaction),
+      };
+    } catch (error) {
+      this.logger.error('❌ Erreur withdrawMoney:', error);
+      throw error;
+    }
+  }
+
+  // ============================================================
   // MÉTHODES DE RÉCUPÉRATION
   // ============================================================
-
   async getRecentTransactions(limit: number = 10): Promise<any[]> {
     return this.transactionModel
       .find()
@@ -341,7 +885,6 @@ export class AdminService {
   // ============================================================
   // UTILISATEURS
   // ============================================================
-
   async getAllUsers(page: number = 1, limit: number = 20, search?: string): Promise<any> {
     const skip = (page - 1) * limit;
     const query: any = {};
@@ -484,7 +1027,6 @@ export class AdminService {
   // ============================================================
   // TRANSACTIONS
   // ============================================================
-
   async getAllTransactions(
     page: number = 1,
     limit: number = 20,
@@ -574,193 +1116,13 @@ export class AdminService {
   }
 
   // ============================================================
-  // ADMIN ACTIONS - DÉPÔT ET RETRAIT
-  // ============================================================
-
-  async depositMoney(
-    adminId: string,
-    userId: string,
-    amount: number,
-    description?: string,
-    qrCode?: string,
-  ) {
-    if (!Types.ObjectId.isValid(userId)) {
-      throw new NotFoundException('ID utilisateur invalide');
-    }
-
-    if (amount <= 0) {
-      throw new BadRequestException('Le montant doit être supérieur à 0');
-    }
-
-    const user = await this.userModel.findById(userId);
-    if (!user) {
-      throw new NotFoundException('Utilisateur non trouvé');
-    }
-
-    if (qrCode) {
-      const isValid = await this.validateQRCode(qrCode, 'deposit');
-      if (!isValid) {
-        throw new BadRequestException('QR Code invalide ou expiré');
-      }
-    }
-
-    const commissionRate = 0.5;
-    const commission = (amount * commissionRate) / 100;
-
-    user.balance += amount;
-    await user.save();
-
-    const transaction = await this.transactionModel.create({
-      senderId: null,
-      receiverId: user._id,
-      type: 'deposit',
-      amount: amount,
-      fee: 0,
-      commission: commission,
-      totalAmount: amount,
-      status: TransactionStatus.COMPLETED,
-      description: description || `Dépôt administrateur`,
-      reference: `ADMIN-DEP-${Date.now()}`,
-      paymentMethod: qrCode ? 'qr_code' : 'admin',
-      metadata: {
-        adminAction: true,
-        adminId: new Types.ObjectId(adminId),
-        qrCode: qrCode || null,
-        commission: commission,
-        commissionRate: commissionRate,
-      },
-    });
-
-    await this.logModel.create({
-      level: 'info',
-      message: `Dépôt de ${amount} Ar effectué sur le compte de ${user.email} par admin ${adminId} (commission: ${commission} Ar)`,
-      userId: userId,
-      date: new Date(),
-      metadata: { amount, description, qrCode, adminId, commission },
-    });
-
-    const userLang = (user.language || 'fr') as Language;
-
-    const depositMessage = this.i18nService.translate(userLang, 'deposit.success', { amount });
-    const commissionMessage = this.i18nService.translate(userLang, 'deposit.commission', {
-      amount: commission,
-    });
-
-    this.chatGateway?.notifyUser(userId, 'balanceUpdate', {
-      newBalance: user.balance,
-      amount,
-      type: 'deposit',
-      message: depositMessage,
-      commissionMessage: commissionMessage,
-      title: this.i18nService.translate(userLang, 'notification.deposit'),
-    });
-
-    return {
-      success: true,
-      message: `${depositMessage} (${commissionMessage})`,
-      newBalance: user.balance,
-      commission: commission,
-      transaction: this.toTransactionResponse(transaction),
-    };
-  }
-
-  async withdrawMoney(
-    adminId: string,
-    userId: string,
-    amount: number,
-    description?: string,
-    qrCode?: string,
-  ) {
-    if (!Types.ObjectId.isValid(userId)) {
-      throw new NotFoundException('ID utilisateur invalide');
-    }
-
-    if (amount <= 0) {
-      throw new BadRequestException('Le montant doit être supérieur à 0');
-    }
-
-    const user = await this.userModel.findById(userId);
-    if (!user) {
-      throw new NotFoundException('Utilisateur non trouvé');
-    }
-
-    if (user.balance < amount) {
-      const userLang = (user.language || 'fr') as Language;
-      throw new BadRequestException(this.i18nService.translate(userLang, 'error.insufficient_balance'));
-    }
-
-    if (qrCode) {
-      const isValid = await this.validateQRCode(qrCode, 'withdraw');
-      if (!isValid) {
-        throw new BadRequestException('QR Code invalide ou expiré');
-      }
-    }
-
-    const commissionRate = 0.5;
-    const commission = (amount * commissionRate) / 100;
-
-    user.balance -= amount;
-    await user.save();
-
-    const transaction = await this.transactionModel.create({
-      senderId: user._id,
-      receiverId: null,
-      type: 'withdrawal',
-      amount: amount,
-      fee: 0,
-      commission: commission,
-      totalAmount: amount,
-      status: TransactionStatus.COMPLETED,
-      description: description || `Retrait administrateur`,
-      reference: `ADMIN-WTH-${Date.now()}`,
-      paymentMethod: qrCode ? 'qr_code' : 'admin',
-      metadata: {
-        adminAction: true,
-        adminId: new Types.ObjectId(adminId),
-        qrCode: qrCode || null,
-        commission: commission,
-        commissionRate: commissionRate,
-      },
-    });
-
-    await this.logModel.create({
-      level: 'info',
-      message: `Retrait de ${amount} Ar effectué sur le compte de ${user.email} par admin ${adminId} (commission: ${commission} Ar)`,
-      userId: userId,
-      date: new Date(),
-      metadata: { amount, description, qrCode, adminId, commission },
-    });
-
-    const userLang = (user.language || 'fr') as Language;
-
-    const withdrawalMessage = this.i18nService.translate(userLang, 'withdrawal.success', { amount });
-    const commissionMessage = this.i18nService.translate(userLang, 'withdrawal.commission', {
-      amount: commission,
-    });
-
-    this.chatGateway?.notifyUser(userId, 'balanceUpdate', {
-      newBalance: user.balance,
-      amount,
-      type: 'withdrawal',
-      message: withdrawalMessage,
-      commissionMessage: commissionMessage,
-      title: this.i18nService.translate(userLang, 'notification.withdrawal'),
-    });
-
-    return {
-      success: true,
-      message: `${withdrawalMessage} (${commissionMessage})`,
-      newBalance: user.balance,
-      commission: commission,
-      transaction: this.toTransactionResponse(transaction),
-    };
-  }
-
-  // ============================================================
   // QR CODE
   // ============================================================
-
   async generateQRCode(adminId: string, type: 'deposit' | 'withdraw', amount?: number) {
+    if (!Types.ObjectId.isValid(adminId)) {
+      throw new BadRequestException('Session administrateur invalide, veuillez vous reconnecter');
+    }
+
     const admin = await this.userModel.findById(adminId);
     if (!admin) {
       throw new NotFoundException('Administrateur non trouvé');
@@ -848,7 +1210,6 @@ export class AdminService {
   // ============================================================
   // ADMINISTRATEURS
   // ============================================================
-
   async createAdmin(adminData: {
     email: string;
     password: string;
@@ -875,7 +1236,7 @@ export class AdminService {
       phoneNumber: adminData.phoneNumber,
       qrCode,
       balance: 0,
-      role: adminData.role || 'admin',
+      role: adminData.role || UserRole.ADMIN,
       isActive: true,
       isGoogleUser: false,
       createdAt: new Date(),
@@ -901,7 +1262,7 @@ export class AdminService {
   async getAdmins() {
     const admins = await this.userModel
       .find({
-        $or: [{ role: 'admin' }, { role: 'super_admin' }],
+        $or: [{ role: UserRole.ADMIN }, { role: UserRole.SUPER_ADMIN }],
       })
       .select('-password')
       .sort({ createdAt: -1 });
@@ -923,7 +1284,7 @@ export class AdminService {
       throw new NotFoundException('Administrateur non trouvé');
     }
 
-    if (admin.role !== 'admin' && admin.role !== 'super_admin') {
+    if (admin.role !== UserRole.ADMIN && admin.role !== UserRole.SUPER_ADMIN) {
       throw new BadRequestException("Cet utilisateur n'est pas un administrateur");
     }
 
@@ -945,8 +1306,10 @@ export class AdminService {
   // ============================================================
   // PROFIL ADMIN
   // ============================================================
-
   async getAdminProfile(userId: string) {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new NotFoundException('ID administrateur invalide');
+    }
     const user = await this.userModel.findById(userId).select('-password');
     if (!user) throw new NotFoundException('Administrateur non trouvé');
     return this.toUserResponse(user);
@@ -969,9 +1332,8 @@ export class AdminService {
   }
 
   // ============================================================
-  // ⭐ PARAMÈTRES SYSTÈME (ADMIN ET SUPER ADMIN)
+  // PARAMÈTRES SYSTÈME
   // ============================================================
-
   async getSettings(user?: any) {
     try {
       let settings = await this.settingModel.findOne();
@@ -981,22 +1343,18 @@ export class AdminService {
 
       const settingsObj = settings.toObject ? settings.toObject() : settings;
 
-      // Si c'est un admin (pas super_admin), masquer les données sensibles
-      if (user && user.role === 'admin') {
+      if (user && user.role === UserRole.ADMIN) {
         const sanitized = { ...settingsObj };
-
         const sensitiveFields = ['apiKeys', 'secrets', 'smtpPassword', 'jwtSecret', 'encryptionKey'];
         for (const field of sensitiveFields) {
           if (sanitized.securityAdvanced && field in sanitized.securityAdvanced) {
             delete sanitized.securityAdvanced[field];
           }
         }
-
         if (sanitized.securityAdvanced) {
           const { rateLimit, ...rest } = sanitized.securityAdvanced;
           sanitized.securityAdvanced = { rateLimit };
         }
-
         return sanitized;
       }
 
@@ -1097,15 +1455,13 @@ export class AdminService {
         throw new BadRequestException('Données de paramètres invalides');
       }
 
-      // Si c'est un admin (pas super_admin), limiter les modifications
-      if (user && user.role === 'admin') {
+      if (user && user.role === UserRole.ADMIN) {
         const sensitiveFields = ['apiKeys', 'secrets', 'smtpPassword', 'jwtSecret', 'encryptionKey'];
         for (const field of sensitiveFields) {
           if (settingsData.securityAdvanced && field in settingsData.securityAdvanced) {
             delete settingsData.securityAdvanced[field];
           }
         }
-
         if (settingsData.security) {
           const allowedSecurityFields = [
             'twoFactorAuth',
@@ -1120,7 +1476,6 @@ export class AdminService {
           }
           settingsData.security = filteredSecurity;
         }
-
         if (settingsData.securityAdvanced) {
           if (settingsData.securityAdvanced.rateLimit) {
             settingsData.securityAdvanced = {
@@ -1167,7 +1522,6 @@ export class AdminService {
   // ============================================================
   // STATISTIQUES AVANCÉES
   // ============================================================
-
   async getRevenueStats(period: 'day' | 'week' | 'month' | 'year' = 'month'): Promise<any> {
     const now = new Date();
     let startDate: Date;
@@ -1310,7 +1664,6 @@ export class AdminService {
   // ============================================================
   // LOGS & STATS SYSTÈME
   // ============================================================
-
   async getSystemLogs(page: number = 1, limit: number = 50, type?: string, from?: string, to?: string) {
     try {
       const query: any = {};
@@ -1419,7 +1772,6 @@ export class AdminService {
   // ============================================================
   // HELPERS PRIVÉS
   // ============================================================
-
   private toUserResponse(user: UserDocument) {
     return {
       id: user._id.toString(),
@@ -1451,7 +1803,7 @@ export class AdminService {
     };
   }
 
-  private formatUptime(seconds: number): string { // ✅ AJOUTÉ
+  private formatUptime(seconds: number): string {
     const days = Math.floor(seconds / 86400);
     const hours = Math.floor((seconds % 86400) / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
